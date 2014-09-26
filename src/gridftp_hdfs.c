@@ -215,7 +215,7 @@ hdfs_command(
     globus_gfs_command_info_t *         cmd_info,
     void *                              user_arg)
 {
-    globus_result_t                    result;
+    globus_result_t                    result = GLOBUS_FAILURE;
     globus_l_gfs_hdfs_handle_t *       hdfs_handle;
     char *                             PathName;
     GlobusGFSName(hdfs_command);
@@ -259,7 +259,7 @@ hdfs_command(
     case GLOBUS_GFS_CMD_DELE:
 {
         errno = 0;
-        if (hdfsDelete(hdfs_handle->fs, PathName) == -1) {
+        if (hdfsDelete(hdfs_handle->fs, PathName,0) == -1) {
             if (errno) {
                 result = GlobusGFSErrorSystemError("unlink", errno);
             } else {

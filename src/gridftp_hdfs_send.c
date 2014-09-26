@@ -133,6 +133,7 @@ hdfs_send(
             GenericError(hdfs_handle, "The file you are trying to read is a directory", rc)
             goto cleanup;
         }
+        hdfs_handle->file_size = fileInfo->mSize;
     } else {
         errno = ENOENT;
         SystemError(hdfs_handle, "opening file for read", rc);
@@ -313,7 +314,9 @@ hdfs_perform_read_cb(
     remaining_read = read_length;
     cur_offset = offset;
     while (remaining_read != 0) {
+       //globus_mutex_lock(hdfs_handle->mutex);
        nbytes = hdfsPread(hdfs_handle->fs, hdfs_handle->fd, cur_offset, cur_buffer_pos, remaining_read);
+       //globus_mutex_unlock(hdfs_handle->mutex);
        if (nbytes == 0) {    /* eof */
            // No error
            globus_gfs_log_message(GLOBUS_GFS_LOG_DUMP, "hdfs_perform_read_cb EOF.\n");
@@ -392,6 +395,10 @@ hdfs_dispatch_read(
                 && (hdfs_handle->op_length < (globus_ssize_t)hdfs_handle->block_size)) {
             read_length = hdfs_handle->op_length;
         }
+        if ((hdfs_handle->offset + read_length) > hdfs_handle->file_size)
+        {
+            read_length = hdfs_handle->file_size - hdfs_handle->offset;
+        }
 
         // Short-circuit the case where we are done
         if (read_length == 0) {
@@ -409,7 +416,7 @@ hdfs_dispatch_read(
         hdfs_handle->nbytes[idx] = read_length;
         hdfs_handle->offsets[idx] = hdfs_handle->offset;
 
-        if ((hdfs_read_handle = globus_malloc(sizeof(hdfs_read_t*))) == NULL) {
+        if ((hdfs_read_handle = globus_malloc(sizeof(hdfs_read_t))) == NULL) {
             MemoryError(hdfs_handle, "Unable to allocate read handle", rc)
             break;
         }
