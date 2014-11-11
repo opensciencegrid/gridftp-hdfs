@@ -451,6 +451,9 @@ hdfs_dispatch_write(
 */
     globus_gridftp_server_get_optimal_concurrency(hdfs_handle->op,
                                                   &hdfs_handle->optimal_count);
+    if (hdfs_handle->optimal_count == 2) {
+        hdfs_handle->optimal_count = 1;
+    }
     globus_gfs_log_message(GLOBUS_GFS_LOG_DUMP, 
         "hdfs_dispatch_write; outstanding %d, optimal %d.\n",
         hdfs_handle->outstanding, hdfs_handle->optimal_count);
