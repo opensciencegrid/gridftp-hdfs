@@ -382,13 +382,17 @@ hdfs_dispatch_read(
 
     globus_gridftp_server_get_optimal_concurrency(hdfs_handle->op,
                                                   &hdfs_handle->optimal_count);
+    if (hdfs_handle->optimal_count == 2) {
+        hdfs_handle->optimal_count = 1;
+    }
 
     // Verify we have sufficient buffer space.
     if ((rc = allocate_buffers(hdfs_handle, hdfs_handle->optimal_count)) != GLOBUS_SUCCESS) {
         goto cleanup;
     }
 
-    while ((hdfs_handle->outstanding < hdfs_handle->optimal_count) && !is_done(hdfs_handle)) {
+    while (!is_done(hdfs_handle)) {
+
         // Determine the size of this read operation.
         read_length = hdfs_handle->block_size;
         if ((hdfs_handle->op_length != -1)
@@ -403,6 +407,10 @@ hdfs_dispatch_read(
         // Short-circuit the case where we are done
         if (read_length == 0) {
             set_done(hdfs_handle, GLOBUS_SUCCESS);
+            break;
+        }
+
+        if (hdfs_handle->outstanding >= hdfs_handle->optimal_count) {
             break;
         }
 
