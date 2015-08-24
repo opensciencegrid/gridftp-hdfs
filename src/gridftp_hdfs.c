@@ -281,7 +281,7 @@ hdfs_command(
             break;
         }
         char * value = NULL;
-        if ((result = hdfs_get_checksum(hdfs_handle, cmd_info->pathname, cmd_info->cksm_alg, &value)) != GLOBUS_SUCCESS) {
+        if ((result = hdfs_get_checksum(hdfs_handle, PathName, cmd_info->cksm_alg, &value)) != GLOBUS_SUCCESS) {
             break;
         }
         if (value == NULL) {
