@@ -308,7 +308,7 @@ globus_result_t hdfs_get_checksum(hdfs_handle_t *hdfs_handle, const char * pathn
             GenericError(hdfs_handle, "Checksum value not specified", rc);
             break;
         }
-        if (strcmp(cksm, requested_cksm) == 0) {
+        if (strcasecmp(cksm, requested_cksm) == 0) {
             *cksm_value = strdup(val);
             break;
         }
@@ -323,7 +323,9 @@ globus_result_t hdfs_get_checksum(hdfs_handle_t *hdfs_handle, const char * pathn
         }
         ptr += 1;
         if (*ptr == '\0') {
-            GenericError(hdfs_handle, "Unexpected null", rc);
+            char * err_str = globus_common_create_string("Requested checksum type %s not found.", requested_cksm);
+            GenericError(hdfs_handle, err_str, rc);
+            globus_free(err_str);
             break;
         }
     }
