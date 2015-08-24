@@ -8,7 +8,7 @@
 
 
 Name:           gridftp-hdfs
-Version:        0.5.4
+Version:        0.5.5
 Release:        1
 Summary:        HDFS DSI plugin for GridFTP
 
@@ -25,21 +25,41 @@ URL:            http://twiki.grid.iu.edu/bin/view/Storage/HadoopInstallation
 Source0:        %{name}-%{version}.tar.gz
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 
-BuildRequires: java-devel
-BuildRequires: hadoop-0.20-libhdfs
+BuildRequires: autoconf
+BuildRequires: automake
+BuildRequires: libtool
+
+BuildRequires: java7-devel >= 1:1.7.0
+BuildRequires: jpackage-utils
+
+BuildRequires: hadoop-libhdfs
 BuildRequires: globus-gridftp-server-devel
 BuildRequires: globus-common-devel
 
-Requires: hadoop-0.20-libhdfs
-Requires: globus-gridftp-server-progs
+BuildRequires: chrpath
+
+Requires: hadoop-libhdfs
+Requires: hadoop-client >= 2.0.0+545
+# ^ was getting "No FileSystem for scheme: hdfs" without this
+# 6.14-2 added OSG plugin-style sysconfig instead of gridftp.conf.d
+# 6.38-1.3 added /etc/gridftp.d
+Requires: globus-gridftp-server-progs >= 6.38-1.3
+%if 0%{?osg} > 0
 Requires: xinetd
+%endif
+Requires: java >= 1:1.7.0
+Requires: jpackage-utils
 
 Requires(pre): shadow-utils
 Requires(preun): initscripts
+%if 0%{?osg} == 0
 Requires(preun): chkconfig
 Requires(post): chkconfig
+%endif
 Requires(postun): initscripts
+%if 0%{?osg} > 0
 Requires(postun): xinetd
+%endif
 
 %description
 HDFS DSI plugin for GridFTP 
@@ -123,6 +143,9 @@ fi
 %endif
 
 %changelog
+* Mon Aug 24 2015 Brian Bockelman <bbockelm@cse.unl.edu> - 0.5.5-1
+- Fix checksum verification with gfal2.
+
 * Tue Dec 06 2011 Brian Bockelman <bbockelm@cse.unl.edu> - 0.5.3-1
 - Initial support for GlobusOnline.
 
