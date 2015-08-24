@@ -259,7 +259,7 @@ hdfs_command(
     case GLOBUS_GFS_CMD_DELE:
 {
         errno = 0;
-        if (hdfsDelete(hdfs_handle->fs, PathName,0) == -1) {
+        if (hdfsDelete(hdfs_handle->fs, PathName, 0) == -1) {
             if (errno) {
                 result = GlobusGFSErrorSystemError("unlink", errno);
             } else {
@@ -314,6 +314,18 @@ hdfs_command(
     case GLOBUS_GFS_CMD_SITE_SYMLINK:
         break;
     case GLOBUS_GFS_CMD_DCSC:
+        break;
+    case GLOBUS_GFS_CMD_HTTP_PUT:
+    case GLOBUS_GFS_CMD_HTTP_GET:
+    case GLOBUS_GFS_CMD_HTTP_CONFIG:
+    case GLOBUS_GFS_CMD_TRNC:
+    case GLOBUS_GFS_CMD_SITE_TASKID:
+    case GLOBUS_GFS_CMD_SITE_RESTRICT:
+    case GLOBUS_GFS_CMD_SITE_CHROOT:
+    case GLOBUS_GFS_CMD_SITE_SHARING:
+    case GLOBUS_GFS_CMD_UPAS:
+    case GLOBUS_GFS_CMD_UPRT:
+    case GLOBUS_GFS_MIN_CUSTOM_CMD:
         break;
     }
 
