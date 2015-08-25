@@ -138,6 +138,90 @@ gridftp_check_core()
 }
 
 /*
+ * Simple thread target - continuously drain
+ */
+static void
+hdfs_forward_log(void *user_arg)
+{
+    int *pipe_r = (int *)user_arg;
+    FILE *fpipe = fdopen(*pipe_r, "r");
+    if (!fpipe)
+    {
+        globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Unable to reopen forwarding log descriptor at fd %d: (errno=%d, %s)\n", *pipe_r, errno, strerror(errno));
+        return;
+    }
+    char line_buffer[1024];
+    while (fgets(line_buffer, 1024, fpipe))
+    {
+        if (!strncmp(line_buffer, "\tat ", 4)) {continue;}
+        else if ((line_buffer[0] == '\0') || (line_buffer[0] == '\n')) {continue;}
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, line_buffer);
+    }
+    fclose(fpipe);
+    free(user_arg);
+}
+
+/*
+ * Open stderr as a pipe which is continuously drained
+ * via a separate thread (forwarding to the globus logging system).
+ */
+static void
+setup_hdfs_logging()
+{
+    char fd2_path[PATH_MAX];
+    ssize_t bytes_in_path;
+    if ((-1 == (bytes_in_path = readlink("/dev/fd/2", fd2_path, PATH_MAX-1))) && (errno != ENOENT) && (errno != EACCES))
+    {
+        globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Unable to check /dev/fd/2 as eUID %d (UID %d) to see if it is /dev/null. (errno=%d, %s)\n", geteuid(), getuid(), errno, strerror(errno));
+        return;
+    }
+    if (bytes_in_path >= 0) {fd2_path[bytes_in_path] = '\0';}
+    if ((bytes_in_path != -1) && strcmp("/dev/null", fd2_path))
+    {
+        globus_gfs_log_message(GLOBUS_GFS_LOG_DUMP, "stderr does not point to /dev/null; not redirecting HDFS output.\n");
+        return;
+    }
+
+    int err;
+    pthread_attr_t attr;
+    if ((err = pthread_attr_init(&attr)))
+    {
+        globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Unable to initialize pthread attribute: (errno=%d, %s).\n", err, sterror(err));
+        return;
+    }
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    pthread_t thread_id;
+
+    int pipe_fds[2];
+    if (-1 == pipe2(pipe_fds, O_CLOEXEC))
+    {
+        globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Failed to open pipes for HDFS logging: (errno=%d, %s).\n", errno, strerror(errno));
+        return;
+    }
+    if (-1 == dup3(pipe_fds[1], 2, O_CLOEXEC))
+    {
+        globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Failed to reopen stderr for HDFS logging: (errno=%d, %s).\n", errno, strerror(errno));
+        return;
+    }
+
+    int *pipe_ptr = malloc(sizeof(int));
+    if (pipe_ptr == NULL)
+    {
+        globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Failed to allocate pointer for pipe.\n");
+        return;
+    }
+    *pipe_ptr = pipe_fds[0];
+    if ((err = pthread_create(&thread_id, &attr, hdfs_forward_log, pipe_ptr)))
+    {
+        globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Failed to launch thread for monitoring HDFS logging: (errno=%d, %s).\n", errno, strerror(errno));
+        free(pipe_ptr);
+        return;
+    }
+
+    
+}
+
+/*
  *  Called when the HDFS module is activated.
  *  Completely boilerplate.
  */
@@ -448,6 +532,9 @@ hdfs_start(
         if (hdfs_handle->syslog_msg)
             snprintf(hdfs_handle->syslog_msg, 255, "%s %s %%s %%i %%i", hdfs_handle->local_host, hdfs_handle->remote_host);
     }
+
+    // Forward the contents of stderr to the globus logging system.
+    setup_hdfs_logging();
 
     // Determine the maximum number of buffers; default to 200.
     char * max_buffer_char = getenv("GRIDFTP_BUFFER_COUNT");
