@@ -258,7 +258,7 @@ hdfs_activate(void)
         globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Unable to initialize global mutex");
         return 1;
     }
-    g_thread_id = -1;
+    g_thread_id = 0;
     g_thread_pipe_fd = -1;
 
     globus_extension_registry_add(
@@ -286,12 +286,12 @@ hdfs_deactivate(void)
         }
         void *retval;
         pthread_join(g_thread_id, &retval);
-        g_thread_id = -1;
+        g_thread_id = 0;
         g_thread_pipe_fd = -1;
     }
 
     globus_mutex_destroy(&g_hdfs_mutex);
-    g_thread_id = -1;
+    g_thread_id = 0;
     g_thread_pipe_fd = -1;
 
     globus_extension_registry_remove(
@@ -803,7 +803,7 @@ set_close_done(
         }
         void *retval;
         pthread_join(g_thread_id, &retval);
-        g_thread_id = -1;
+        g_thread_id = 0;
         g_thread_pipe_fd = -1;
     }
 }
