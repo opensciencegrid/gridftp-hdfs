@@ -28,6 +28,10 @@ char err_msg[MSG_SIZE];
 int local_io_block_size = 0;
 int local_io_count = 0;
 
+static globus_mutex_t g_hdfs_mutex;
+static pthread_t g_thread_id;
+static int g_thread_pipe_fd;
+
 static void hdfs_trev(globus_gfs_event_info_t *, void *);
 inline void set_done(hdfs_handle_t *, globus_result_t);
 static int  hdfs_activate(void);
@@ -140,7 +144,7 @@ gridftp_check_core()
 /*
  * Simple thread target - continuously drain
  */
-static void
+static void *
 hdfs_forward_log(void *user_arg)
 {
     int *pipe_r = (int *)user_arg;
@@ -148,17 +152,26 @@ hdfs_forward_log(void *user_arg)
     if (!fpipe)
     {
         globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Unable to reopen forwarding log descriptor at fd %d: (errno=%d, %s)\n", *pipe_r, errno, strerror(errno));
-        return;
+        return NULL;
     }
+   globus_gfs_log_message(GLOBUS_GFS_LOG_DUMP, "Starting HDFS log forwarder; messages from HDFS are prefixed with 'HDFS: '\n");
     char line_buffer[1024];
+    unsigned log_count = 0;
     while (fgets(line_buffer, 1024, fpipe))
     {
         if (!strncmp(line_buffer, "\tat ", 4)) {continue;}
         else if ((line_buffer[0] == '\0') || (line_buffer[0] == '\n')) {continue;}
-        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, line_buffer);
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "HDFS: %s", line_buffer);
+        log_count++;
     }
     fclose(fpipe);
     free(user_arg);
+    if (log_count)
+    {
+        globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Stopping HDFS log forwarder; %lu messages forwarded.\n", log_count);
+    }
+    globus_mutex_unlock(&g_hdfs_mutex);
+    return NULL;
 }
 
 /*
@@ -168,17 +181,25 @@ hdfs_forward_log(void *user_arg)
 static void
 setup_hdfs_logging()
 {
+    if (globus_mutex_trylock(&g_hdfs_mutex))
+    {
+        // The logging thread has already been initialized.
+        return;
+    }
+
     char fd2_path[PATH_MAX];
     ssize_t bytes_in_path;
     if ((-1 == (bytes_in_path = readlink("/dev/fd/2", fd2_path, PATH_MAX-1))) && (errno != ENOENT) && (errno != EACCES))
     {
         globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Unable to check /dev/fd/2 as eUID %d (UID %d) to see if it is /dev/null. (errno=%d, %s)\n", geteuid(), getuid(), errno, strerror(errno));
+        globus_mutex_unlock(&g_hdfs_mutex);
         return;
     }
     if (bytes_in_path >= 0) {fd2_path[bytes_in_path] = '\0';}
     if ((bytes_in_path != -1) && strcmp("/dev/null", fd2_path))
     {
         globus_gfs_log_message(GLOBUS_GFS_LOG_DUMP, "stderr does not point to /dev/null; not redirecting HDFS output.\n");
+        globus_mutex_unlock(&g_hdfs_mutex);
         return;
     }
 
@@ -187,33 +208,38 @@ setup_hdfs_logging()
     if ((err = pthread_attr_init(&attr)))
     {
         globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Unable to initialize pthread attribute: (errno=%d, %s).\n", err, sterror(err));
+        globus_mutex_unlock(&g_hdfs_mutex);
         return;
     }
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-    pthread_t thread_id;
 
     int pipe_fds[2];
     if (-1 == pipe2(pipe_fds, O_CLOEXEC))
     {
         globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Failed to open pipes for HDFS logging: (errno=%d, %s).\n", errno, strerror(errno));
+        globus_mutex_unlock(&g_hdfs_mutex);
         return;
     }
     if (-1 == dup3(pipe_fds[1], 2, O_CLOEXEC))
     {
         globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Failed to reopen stderr for HDFS logging: (errno=%d, %s).\n", errno, strerror(errno));
+        globus_mutex_unlock(&g_hdfs_mutex);
         return;
     }
+    close(pipe_fds[1]);
+    g_thread_pipe_fd = 2;
 
     int *pipe_ptr = malloc(sizeof(int));
     if (pipe_ptr == NULL)
     {
         globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Failed to allocate pointer for pipe.\n");
+        globus_mutex_unlock(&g_hdfs_mutex);
         return;
     }
     *pipe_ptr = pipe_fds[0];
-    if ((err = pthread_create(&thread_id, &attr, hdfs_forward_log, pipe_ptr)))
+    if ((err = pthread_create(&g_thread_id, &attr, hdfs_forward_log, pipe_ptr)))
     {
         globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Failed to launch thread for monitoring HDFS logging: (errno=%d, %s).\n", errno, strerror(errno));
+        globus_mutex_unlock(&g_hdfs_mutex);
         free(pipe_ptr);
         return;
     }
@@ -223,11 +249,18 @@ setup_hdfs_logging()
 
 /*
  *  Called when the HDFS module is activated.
- *  Completely boilerplate.
+ *  Initializes the global mutex.
  */
 int
 hdfs_activate(void)
 {
+    if (globus_mutex_init(&g_hdfs_mutex, GLOBUS_NULL)) {
+        globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Unable to initialize global mutex");
+        return 1;
+    }
+    g_thread_id = -1;
+    g_thread_pipe_fd = -1;
+
     globus_extension_registry_add(
         GLOBUS_GFS_DSI_REGISTRY,
         "hdfs",
@@ -244,6 +277,23 @@ hdfs_activate(void)
 int
 hdfs_deactivate(void)
 {
+    if (g_thread_id > 0)
+    {
+        if (g_thread_pipe_fd >= 0)
+        {
+            fflush(stderr);
+            close(g_thread_pipe_fd);
+        }
+        void *retval;
+        pthread_join(g_thread_id, &retval);
+        g_thread_id = -1;
+        g_thread_pipe_fd = -1;
+    }
+
+    globus_mutex_destroy(&g_hdfs_mutex);
+    g_thread_id = -1;
+    g_thread_pipe_fd = -1;
+
     globus_extension_registry_remove(
         GLOBUS_GFS_DSI_REGISTRY, "hdfs");
 
@@ -743,6 +793,18 @@ set_close_done(
     hdfs_handle->done = 2;
     if ((hdfs_handle->done_status == GLOBUS_SUCCESS) && (rc != GLOBUS_SUCCESS)) {
         hdfs_handle->done_status = rc;
+    }
+    if (g_thread_id > 0)
+    {
+        if (g_thread_pipe_fd >= 0)
+        {
+            fflush(stderr);
+            close(g_thread_pipe_fd);
+        }
+        void *retval;
+        pthread_join(g_thread_id, &retval);
+        g_thread_id = -1;
+        g_thread_pipe_fd = -1;
     }
 }
 
