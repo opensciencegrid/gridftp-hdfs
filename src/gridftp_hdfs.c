@@ -455,6 +455,7 @@ hdfs_command(
                 if (errno == EIO) {
                     hdfsDelete(hdfs_handle->fs, PathName, 0);
                     failed = hdfsRename(hdfs_handle->fs, FromPathName, PathName);
+                    result = GLOBUS_SUCCESS;
                 }
                 if (failed) {
                     char * rename_msg = (char *)globus_malloc(1024);
