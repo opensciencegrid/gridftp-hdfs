@@ -451,11 +451,18 @@ hdfs_command(
         errno = 0;
         if (hdfsRename(hdfs_handle->fs, FromPathName, PathName)) {
             if (errno) {
-                char * rename_msg = (char *)globus_malloc(1024);
-                snprintf(rename_msg, 1024, "rename from %s", FromPathName);
-                rename_msg[1023] = '\0';
-                SystemError(hdfs_handle, rename_msg, result);
-                globus_free(rename_msg);
+                int failed = 1;
+                if (errno == EIO) {
+                    hdfsDelete(hdfs_handle->fs, PathName, 0);
+                    failed = hdfsRename(hdfs_handle->fs, FromPathName, PathName);
+                }
+                if (failed) {
+                    char * rename_msg = (char *)globus_malloc(1024);
+                    snprintf(rename_msg, 1024, "rename from %s", FromPathName);
+                    rename_msg[1023] = '\0';
+                    SystemError(hdfs_handle, rename_msg, result);
+                    globus_free(rename_msg);
+                }
             } else {
                 GenericError(hdfs_handle, "Unable to rename file (reason unknown)", result);
             }
