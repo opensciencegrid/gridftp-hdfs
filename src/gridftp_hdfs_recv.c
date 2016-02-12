@@ -5,7 +5,7 @@
 #define ADVANCE_SLASHES(x) {while (x[0] == '/' && x[1] == '/') x++;}
 
 // extern global variable "gridftp_file_name"
-extern char gridftp_file_name[256];
+extern char gridftp_file_name[PATH_MAX];
 extern char gridftp_transfer_type[10];
 
 // Forward declarations of local functions

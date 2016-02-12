@@ -31,8 +31,8 @@ int local_io_block_size = 0;
 int local_io_count = 0;
 
 // global variable for username, filename and event type
-char gridftp_user_name[256];
-char gridftp_file_name[256];
+char gridftp_user_name[PATH_MAX];
+char gridftp_file_name[PATH_MAX];
 char gridftp_transfer_type[10];
 
 static globus_mutex_t g_hdfs_mutex;

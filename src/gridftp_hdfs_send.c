@@ -2,7 +2,7 @@
 #include "gridftp_hdfs.h"
 #include <syslog.h>
 
-extern char gridftp_file_name[256];
+extern char gridftp_file_name[PATH_MAX];
 extern char gridftp_transfer_type[10];
 
 // Forward declarations of local functions
