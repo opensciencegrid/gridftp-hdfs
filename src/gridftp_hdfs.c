@@ -30,6 +30,11 @@ char err_msg[MSG_SIZE];
 int local_io_block_size = 0;
 int local_io_count = 0;
 
+// global variable for username, filename and event type
+char gridftp_user_name[PATH_MAX];
+char gridftp_file_name[PATH_MAX];
+char gridftp_transfer_type[10];
+
 static globus_mutex_t g_hdfs_mutex;
 static pthread_t g_thread_id;
 static int g_thread_pipe_fd;
@@ -603,12 +608,15 @@ hdfs_start(
     strlength = strlength < 256 ? strlength  : 256;
     hdfs_handle->username = globus_malloc(sizeof(char)*strlength);
     if (hdfs_handle->username == NULL) {
+        gridftp_user_name[0] = '\0';
         finished_info.result = GLOBUS_FAILURE;
         globus_gridftp_server_operation_finished(
             op, GLOBUS_FAILURE, &finished_info);
         return;
     }
     strncpy(hdfs_handle->username, session_info->username, strlength);
+    // also copy username to global variable gridftp_user_name
+    strncpy(gridftp_user_name, session_info->username, strlength);
 
     // Pull configuration from environment.
     hdfs_handle->replicas = 3;
