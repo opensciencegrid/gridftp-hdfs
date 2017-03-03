@@ -403,27 +403,29 @@ hdfs_command(
         break;
     case GLOBUS_GFS_CMD_RMD:
 {
-        int numEntries = 0;
+        int numEntries = -1;
         errno = 0;
         hdfsFileInfo *info = hdfsListDirectory(hdfs_handle->fs, PathName, &numEntries);
-        if (numEntries) { // NOTE: above call sets info to NULL in case of empty directory.
-            errno = ENOTEMPTY;
-            SystemError(hdfs_handle, "rmdir", result);
-        }
         if (info) {
             hdfsFreeFileInfo(info, numEntries);
             info = NULL;
-        } else if (errno != ENOENT) {
+            errno = 0;
+        }
+        if (numEntries > 0) { // NOTE: above call sets info to NULL in case of empty directory.
+            errno = ENOTEMPTY;
+            SystemError(hdfs_handle, "rmdir", result);
+            break;
+        }
+        if ((numEntries < 0) && (errno != ENOENT)) {
             if (errno) {
                 SystemError(hdfs_handle, "rmdir", result);
-            } else {
+            } else { // Logic error in libhdfs: didn't set numEntries or errno.
                 GenericError(hdfs_handle, "Unable to delete directory (reason unknown)", result);
             }
             break;
         }
-        if (numEntries) {break;}
 }
-        // Not done - fall through
+        // Only case remaining is empty directory.  OK to delete; not done - fall through
     case GLOBUS_GFS_CMD_DELE:
 {
         errno = 0;

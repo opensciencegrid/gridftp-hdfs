@@ -101,11 +101,13 @@ hdfs_stat(
     else
     {
         int i;
-    
+
+        stat_count = -1; // Workaround for HDFS-8407: hdfsListDirectory doesn't set errno=0 on success.
+        errno = 0;
         hdfsFileInfo * dir = hdfsListDirectory(hdfs_handle->fs, PathName, &stat_count);
         if(dir == NULL)
         {
-            if (errno == 0)
+            if (!stat_count) // On success, stat_count is updated.
             { // Empty directory case
                 stat_array = (globus_gfs_stat_t *) globus_malloc(sizeof(globus_gfs_stat_t));
                 if(!stat_array)
