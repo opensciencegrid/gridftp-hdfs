@@ -335,6 +335,48 @@ globus_result_t hdfs_save_checksum(hdfs_handle_t *hdfs_handle) {
     return rc;
 }
 
+static globus_result_t
+hdfs_calculate_checksum(hdfs_handle_t *hdfs_handle, hdfsFS fs, const char *type)
+{
+    globus_result_t rc = GLOBUS_SUCCESS;
+
+    GlobusGFSName(hdfs_calculate_checksum);
+
+    hdfs_parse_checksum_types(hdfs_handle, type);
+    hdfs_initialize_checksum(hdfs_handle);
+
+    hdfsFile fd = hdfsOpenFile(fs, hdfs_handle->pathname, O_RDONLY, 0, 1, 0);
+    if (fd == NULL) {
+        SystemError(hdfs_handle, "Failed to open file for checksumming", rc)
+        return rc;
+    }
+
+    const size_t cksum_buffer_size = 1024*1024;
+    void *buffer = malloc(cksum_buffer_size);
+    if (buffer == NULL) {
+        MemoryError(hdfs_handle, "Unable to allocate checksum temp buffer", rc);
+        hdfsCloseFile(fs, fd);
+        return rc;
+    }
+    ssize_t retval = 0;
+    do {
+        hdfs_udpate_checksums(hdfs_handle, buffer, retval);
+        errno = 0;  // older versions of libhdfs sometimes fails to reset errno.
+        retval = hdfsRead(fs, fd, buffer, cksum_buffer_size);
+        if ((retval == -1) && (errno == EINTR)) {continue;}
+    } while (retval > 0);
+    if (retval == -1) {
+        SystemError(hdfs_handle, "Failed to read from file for checksumming", rc);
+        // Fall-through
+    }
+    hdfsCloseFile(fs, fd);
+
+    if (rc == GLOBUS_SUCCESS) {
+        rc = hdfs_save_checksum(hdfs_handle);
+    }
+    return rc;
+}
+
 /*
  *  Retrieve checksums.
  */
@@ -367,8 +409,13 @@ globus_result_t hdfs_get_checksum(hdfs_handle_t *hdfs_handle, const char * pathn
 
     hdfsFile fh = hdfsOpenFile(fs, filename, O_RDONLY, 0, 0, 0);
     if (fh == NULL) {
-        SystemError(hdfs_handle, "Failed to open checksum file", rc);
-        return rc;
+        rc = hdfs_calculate_checksum(hdfs_handle, fs, requested_cksm);
+        if (rc != GLOBUS_SUCCESS) {return rc;}
+        fh = hdfsOpenFile(fs, filename, O_RDONLY, 0, 0, 0);
+        if (fh == NULL) {
+            SystemError(hdfs_handle, "Failed to open checksum file", rc);
+            return rc;
+        }
     }
 
     char buffer[OUTPUT_BUFFER_SIZE], cksm[OUTPUT_BUFFER_SIZE], *val;
