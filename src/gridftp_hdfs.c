@@ -838,6 +838,7 @@ hdfs_destroy(
             globus_free(hdfs_handle->mutex);
         }
         globus_free(hdfs_handle);
+        free(hdfs_handle->cvmfs_graft);
     }
     closelog();
 }
