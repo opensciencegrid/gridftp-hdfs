@@ -30,7 +30,7 @@
 
 # Comment out the following line to disable on-the-fly GridFTP checksum calculations
 # Alternately, remove one or more checksum format from the list to reduce CPU usage.
-export GRIDFTP_HDFS_CHECKSUMS="MD5,ADLER32,CRC32,CKSUM"
+export GRIDFTP_HDFS_CHECKSUMS="MD5,ADLER32,CRC32,CKSUM,CVMFS"
 
 # By default, reduce the amount of memory that HDFS uses for its embedded JVM.
 # This is typically a safe setting as long as the process only has one file
