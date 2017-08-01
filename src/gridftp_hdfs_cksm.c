@@ -15,7 +15,7 @@
 #define CVMFS_CHUNK_SIZE (24*1024*1024)
 
 // TODO: resizable output buffer.
-#define OUTPUT_BUFFER_SIZE (32*1024)
+#define OUTPUT_BUFFER_SIZE (128*1024)
 
 // CRC table taken from POSIX description of algorithm.
 static uint32_t const crctab[256] =
