@@ -115,7 +115,7 @@ static void emit_cvmfs_chunk(hdfs_handle_t *hdfs_handle) {
     if (hdfs_handle->chunk_count == 1) {
         hdfs_handle->chunk_offsets[hdfs_handle->chunk_count-1] = 0;
     } else {
-        hdfs_handle->chunk_offsets[hdfs_handle->chunk_count-1] = hdfs_handle->chunk_offsets[hdfs_handle->chunk_count-2] + hdfs_handle->cur_chunk_bytes;
+        hdfs_handle->chunk_offsets[hdfs_handle->chunk_count-1] = hdfs_handle->chunk_offsets[hdfs_handle->chunk_count-2] + CVMFS_CHUNK_SIZE;
     }
     unsigned char sha1_value[EVP_MAX_MD_SIZE];
     int sha1_len;
