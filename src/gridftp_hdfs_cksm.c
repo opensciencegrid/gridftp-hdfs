@@ -381,9 +381,29 @@ hdfs_calculate_checksum(hdfs_handle_t *hdfs_handle, hdfsFS fs, const char *type)
 }
 
 /*
+ * Returns 1 if the requested checksum type is supported; 0 otherwise.
+ */
+static int
+hdfs_checksum_type_supported(hdfs_handle_t *hdfs_handle, const char * requested_cksm) {
+    return (
+            (!strcasecmp("MD5", requested_cksm) && (hdfs_handle->cksm_types & HDFS_CKSM_TYPE_MD5)) ||
+            (!strcasecmp("CKSUM", requested_cksm) && (hdfs_handle->cksm_types & HDFS_CKSM_TYPE_CKSUM)) ||
+            (!strcasecmp("CRC32", requested_cksm) && (hdfs_handle->cksm_types & HDFS_CKSM_TYPE_CRC32)) ||
+            (!strcasecmp("ADLER32", requested_cksm) && (hdfs_handle->cksm_types & HDFS_CKSM_TYPE_ADLER32)) ||
+            (!strcasecmp("CVMFS", requested_cksm) && (hdfs_handle->cksm_types & HDFS_CKSM_TYPE_CVMFS))
+           );
+}
+
+/*
  *  Retrieve checksums.
  */
-globus_result_t hdfs_get_checksum(hdfs_handle_t *hdfs_handle, const char * pathname, const char * requested_cksm, char**cksm_value) {
+static globus_result_t hdfs_get_checksum_internal(hdfs_handle_t *hdfs_handle, const char * pathname, const char * requested_cksm, char**cksm_value, int recurse);
+
+globus_result_t hdfs_get_checksum(hdfs_handle_t *hdfs_handle, const char * pathname, const char * requested_cksm, char ** cksm_value) {
+    return hdfs_get_checksum_internal(hdfs_handle, pathname, requested_cksm, cksm_value, 1);
+}
+
+globus_result_t hdfs_get_checksum_internal(hdfs_handle_t *hdfs_handle, const char * pathname, const char * requested_cksm, char**cksm_value, int recurse) {
 
     globus_result_t rc = GLOBUS_SUCCESS;
 
@@ -462,9 +482,17 @@ globus_result_t hdfs_get_checksum(hdfs_handle_t *hdfs_handle, const char * pathn
         }
         ptr += 1;
         if (*ptr == '\0') {
-            char * err_str = globus_common_create_string("Requested checksum type %s not found.", requested_cksm);
-            GenericError(hdfs_handle, err_str, rc);
-            globus_free(err_str);
+            if (recurse && hdfs_checksum_type_supported(hdfs_handle, requested_cksm)) {
+                // Try clearing the current checksum file and re-opening.
+                hdfsCloseFile(fs, fh);
+                hdfsDelete(fs, filename, 0);
+                fh = hdfsOpenFile(fs, filename, O_RDONLY, 0, 0, 0);
+                rc = hdfs_get_checksum_internal(hdfs_handle, pathname, requested_cksm, cksm_value, 0);
+            } else {
+                char * err_str = globus_common_create_string("Requested checksum type %s not found.", requested_cksm);
+                GenericError(hdfs_handle, err_str, rc);
+                globus_free(err_str);
+            }
             break;
         }
     }
@@ -473,8 +501,8 @@ globus_result_t hdfs_get_checksum(hdfs_handle_t *hdfs_handle, const char * pathn
         GenericError(hdfs_handle, "Failed to retrieve checksum", rc);
     }
 
-    // return -1 on err
-    if (hdfsCloseFile(fs, fh) < 0) {
+    // return -1 on err; we check for fh being null here as it may have been re-opened if we regenerate the checksum file above.
+    if (fh && (hdfsCloseFile(fs, fh) < 0)) {
         SystemError(hdfs_handle, "Failed to close checksum file", rc);
     }
 
