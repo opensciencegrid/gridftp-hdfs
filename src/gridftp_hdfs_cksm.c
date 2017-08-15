@@ -14,9 +14,7 @@
 // GridFTP-HDFS block size (1MB).
 #define CVMFS_CHUNK_SIZE (24*1024*1024)
 
-// TODO: resizable output buffer.
 #define OUTPUT_BUFFER_STARTING_SIZE (4*1024)
-#define OUTPUT_BUFFER_SIZE (256*1024)
 
 // CRC table taken from POSIX description of algorithm.
 static uint32_t const crctab[256] =
@@ -105,6 +103,7 @@ char *concatenate(char *buffer, globus_off_t *offset, globus_size_t *length, con
     va_list args;
     va_start(args, format);
     int rc = vsnprintf(cur, remaining_length, format, args);
+    va_end(args);
     if (rc < 0) {
         free(buffer);
         return NULL;
@@ -115,15 +114,16 @@ char *concatenate(char *buffer, globus_off_t *offset, globus_size_t *length, con
         cur = realloc(buffer, *length);
         if (cur == NULL) {
             free(buffer);
-            va_end(args);
             return NULL;
         }
         buffer = cur;
         cur = buffer + *offset;
-        rc = vsnprintf(cur, remaining_length, format, args);
+        va_list args2;
+        va_start(args2, format);
+        rc = vsnprintf(cur, remaining_length, format, args2);
+        va_end(args2);
         assert((rc >= 0) && (rc < remaining_length));
     }
-    va_end(args);
     *offset += rc;
     return buffer;
 }
@@ -374,7 +374,7 @@ globus_result_t hdfs_save_checksum(hdfs_handle_t *hdfs_handle) {
     if (buffer == NULL) {
         MemoryError(hdfs_handle, "Failed to allocate checksum string", rc);
         // Returns # of bytes, -1 on err
-    } else if (hdfsWrite(fs, fh, buffer, size) < 0) {
+    } else if (hdfsWrite(fs, fh, buffer, strlen(buffer)) < 0) {
         SystemError(hdfs_handle, "Failed to write checksum file", rc);
     }
 
@@ -511,30 +511,30 @@ globus_result_t hdfs_get_checksum_internal(hdfs_handle_t *hdfs_handle, const cha
     do {
         do {
             errno = 0;  // Some versions of libhdfs forget to clear errno internally.
-            retval = hdfsRead(fs, fh, read_buffer, OUTPUT_BUFFER_SIZE-1);
+            retval = hdfsRead(fs, fh, read_buffer, OUTPUT_BUFFER_STARTING_SIZE-1);
         } while ((retval < 0) && errno == EINTR);
 
         if (retval > 0) {
+            read_buffer[retval] = '\0';
             buffer = concatenate(buffer, &off, &size, "%s", read_buffer);
         }
     } while (retval > 0);
+    free(read_buffer);
 
     if (retval < 0) {
         SystemError(hdfs_handle, "Failed to read checksum file", rc);
         free(buffer);
-        free(read_buffer);
         return rc;
     }
 
-    unsigned length = 0;
+    unsigned int length = 0;
     const char * ptr = buffer;
-    char *cksm = malloc(length);
+    char *cksm = malloc(size);
     char *val;
     *cksm_value = NULL;
     if (!cksm || !buffer) {
         MemoryError(hdfs_handle, "Failed to allocate checksum parse buffers", rc);
         free(buffer);
-        free(read_buffer);
         return rc;
     }
     // Raise your hand if you hate string parsing in C.
@@ -570,23 +570,24 @@ globus_result_t hdfs_get_checksum_internal(hdfs_handle_t *hdfs_handle, const cha
         }
         ptr += 1;
         if (*ptr == '\0') {
-            if (recurse && hdfs_checksum_type_supported(hdfs_handle, requested_cksm)) {
-                // Try clearing the current checksum file and re-opening.
-                hdfsCloseFile(fs, fh);
-                hdfsDelete(fs, filename, 0);
-                fh = hdfsOpenFile(fs, filename, O_RDONLY, 0, 0, 0);
-                rc = hdfs_get_checksum_internal(hdfs_handle, pathname, requested_cksm, cksm_value, 0);
-            } else {
-                char * err_str = globus_common_create_string("Requested checksum type %s not found.", requested_cksm);
-                GenericError(hdfs_handle, err_str, rc);
-                globus_free(err_str);
-            }
+            char * err_str = globus_common_create_string("Requested checksum type %s not found.", requested_cksm);
+            GenericError(hdfs_handle, err_str, rc);
+            globus_free(err_str);
             break;
         }
     }
 
     if (*cksm_value == NULL) {
-        GenericError(hdfs_handle, "Failed to retrieve checksum", rc);
+        if (recurse && hdfs_checksum_type_supported(hdfs_handle, requested_cksm)) {
+            // Try clearing the current checksum file and re-opening.
+            hdfsCloseFile(fs, fh);
+            hdfsDelete(fs, filename, 0);
+            rc = hdfs_get_checksum_internal(hdfs_handle, pathname, requested_cksm, cksm_value, 0);
+            fh = hdfsOpenFile(fs, filename, O_RDONLY, 0, 0, 0);
+        }
+        if ((*cksm_value == NULL) && (rc == GLOBUS_SUCCESS)) {
+            GenericError(hdfs_handle, "Failed to retrieve checksum", rc);
+        }
     }
 
     // return -1 on err; we check for fh being null here as it may have been re-opened if we regenerate the checksum file above.
@@ -603,7 +604,6 @@ globus_result_t hdfs_get_checksum_internal(hdfs_handle_t *hdfs_handle, const cha
     }
     free(cksm);
     free(buffer);
-    free(read_buffer);
     // Note we purposely leak the filesystem handle (fs), as Hadoop has disconnect issues.
     return rc;
 }
