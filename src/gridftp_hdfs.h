@@ -11,6 +11,7 @@
 #include <hdfs.h>
 #include <stdint.h>
 #include <openssl/md5.h>
+#include <openssl/evp.h>
 
 #include "globus_gridftp_server.h"
 #include "gridftp_hdfs_error.h"
@@ -34,6 +35,9 @@ extern globus_version_t gridftp_hdfs_local_version;
 #define HDFS_CKSM_TYPE_CRC32   2
 #define HDFS_CKSM_TYPE_ADLER32 4
 #define HDFS_CKSM_TYPE_MD5     8
+// Create checksums compatible with CVMFS's grafting tool; allows easy publication of files
+// from HDFS into CVMFS.
+#define HDFS_CKSM_TYPE_CVMFS   16
 
 typedef struct globus_l_gfs_hdfs_handle_s
 {
@@ -82,6 +86,15 @@ typedef struct globus_l_gfs_hdfs_handle_s
     MD5_CTX                             md5;
     char                                md5_output[MD5_DIGEST_LENGTH];
     char                                md5_output_human[MD5_DIGEST_LENGTH*2+1];
+    EVP_MD_CTX                         *file_sha1;
+    EVP_MD_CTX                         *chunk_sha1;
+    char                                file_sha1_human[EVP_MAX_MD_SIZE*2+1];
+    char                              **chunk_sha1_human;
+    globus_size_t                       cur_chunk_bytes;
+    globus_size_t                      *chunk_offsets;
+    globus_size_t                       chunk_count;
+    globus_size_t                       chunk_array_size;
+    char                               *cvmfs_graft;
     uint32_t                            adler32;
     char                                adler32_human[2*sizeof(uint32_t)+1];
     uint32_t                            crc32;

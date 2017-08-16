@@ -7,6 +7,15 @@
 
 #include <hdfs.h>
 
+// NOTE: Internally, CVMFS defines anything 25MB or over to be
+// a "big chunk", which triggers very aggressive cache cleanup
+// (sometimes, 50% of the total space).  Hence, we resize down
+// to 24MB.  This aligns reasonably well with the default
+// GridFTP-HDFS block size (1MB).
+#define CVMFS_CHUNK_SIZE (24*1024*1024)
+
+#define OUTPUT_BUFFER_STARTING_SIZE (4*1024)
+
 // CRC table taken from POSIX description of algorithm.
 static uint32_t const crctab[256] =
 {
@@ -65,14 +74,69 @@ static uint32_t const crctab[256] =
 };
 
 /*
- * Taken from globus_gridftp_server_file.c
- * Assume md5_human is length MD5_DIGEST_LENGTH*2+1
- * Assume md5_openssl is length MD5_DIGEST_LENGTH
+ * Helper function to concatenate formatted strings onto a buffer.
+ *
+ * - `buffer` is the current base of the memory buffer as returned by malloc;
+ *   this memory may be realloc'd to grow the total string space.
+ * - `offset` is the offset into the buffer where writing should occur.
+ * - `length` is the total length of the memory buffer.
+ *
+ * If buffer, offset, or length are NULL, it is considered an error.
+ *
+ * On error, buffer is free'd and NULL is returned.
+ *
+ * On success, the current buffer location is returned and offset / length are updated
+ * appropriately.
  */
-static void human_readable_md5(unsigned char *md5_human, const unsigned char *md5_openssl) {
+static
+char *concatenate(char *buffer, globus_off_t *offset, globus_size_t *length, const char *format, ...) {
+    if (buffer == NULL) {
+        return NULL;
+    }
+    if (length == 0) {
+        return buffer;
+    }
+
+    globus_size_t remaining_length = *length - *offset;
+    char *cur = buffer + *offset;
+
+    va_list args;
+    va_start(args, format);
+    int rc = vsnprintf(cur, remaining_length, format, args);
+    va_end(args);
+    if (rc < 0) {
+        free(buffer);
+        return NULL;
+    } else if (rc >= remaining_length) {
+        // Resize the buffer; add in an extra KB to avoid having to resize often.
+        *length = *length - remaining_length + rc + 1 + 1024;
+        remaining_length = *length - *offset;
+        cur = realloc(buffer, *length);
+        if (cur == NULL) {
+            free(buffer);
+            return NULL;
+        }
+        buffer = cur;
+        cur = buffer + *offset;
+        va_list args2;
+        va_start(args2, format);
+        rc = vsnprintf(cur, remaining_length, format, args2);
+        va_end(args2);
+        assert((rc >= 0) && (rc < remaining_length));
+    }
+    *offset += rc;
+    return buffer;
+}
+
+/*
+ * Taken from globus_gridftp_server_file.c
+ * Assume md5_human is length digest_length*2+1
+ * Assume md5_openssl is length digest_length
+ */
+static void human_readable_evp(unsigned char *md5_human, const unsigned char *md5_openssl, int digest_length) {
     unsigned int i;
     unsigned char * md5ptr = md5_human;
-    for (i = 0; i < MD5_DIGEST_LENGTH; i++) {
+    for (i = 0; i < digest_length; i++) {
         sprintf(md5ptr, "%02x", md5_openssl[i]);
         md5ptr++;
         md5ptr++;
@@ -92,6 +156,51 @@ static void human_readable_adler32(unsigned char *adler32_human, uint32_t adler3
     adler32_ptr = '\0';
 }
 
+static void emit_cvmfs_chunk(hdfs_handle_t *hdfs_handle) {
+    if (hdfs_handle->cur_chunk_bytes == 0) {return;}
+
+    hdfs_handle->chunk_count++;
+    if (hdfs_handle->chunk_count >= hdfs_handle->chunk_array_size) {
+        hdfs_handle->chunk_array_size += 50;  // Enough to hold slightly more than 1GB of additional data.
+        hdfs_handle->chunk_sha1_human = realloc(hdfs_handle->chunk_sha1_human, hdfs_handle->chunk_array_size * sizeof(char*));
+        hdfs_handle->chunk_offsets = realloc(hdfs_handle->chunk_offsets, hdfs_handle->chunk_array_size * sizeof(globus_size_t));
+    }
+    globus_off_t prior_offset;
+    if (hdfs_handle->chunk_count == 1) {
+        hdfs_handle->chunk_offsets[hdfs_handle->chunk_count-1] = 0;
+    } else {
+        hdfs_handle->chunk_offsets[hdfs_handle->chunk_count-1] = hdfs_handle->chunk_offsets[hdfs_handle->chunk_count-2] + CVMFS_CHUNK_SIZE;
+    }
+    unsigned char sha1_value[EVP_MAX_MD_SIZE];
+    int sha1_len;
+    EVP_DigestFinal_ex(hdfs_handle->chunk_sha1, sha1_value, &sha1_len);
+    EVP_DigestInit_ex(hdfs_handle->chunk_sha1, EVP_sha1(), NULL);
+    hdfs_handle->chunk_sha1_human[hdfs_handle->chunk_count-1] = malloc(2*sha1_len+1);
+    human_readable_evp(hdfs_handle->chunk_sha1_human[hdfs_handle->chunk_count-1], sha1_value, sha1_len);
+}
+
+static void emit_cvmfs_graft(hdfs_handle_t *hdfs_handle) {
+    globus_size_t size = OUTPUT_BUFFER_STARTING_SIZE;
+    hdfs_handle->cvmfs_graft = malloc(size);
+    globus_off_t offset = 0;
+    if (!hdfs_handle->cvmfs_graft) {return;}
+
+    hdfs_handle->cvmfs_graft = concatenate(hdfs_handle->cvmfs_graft, &offset, &size, "size=%lld;checksum=%s", hdfs_handle->offset, hdfs_handle->file_sha1_human);
+    if (hdfs_handle->chunk_count < 2) {
+        hdfs_handle->cvmfs_graft = concatenate(hdfs_handle->cvmfs_graft, &offset, &size, ";chunk_offsets=0;chunk_checksums=%s", hdfs_handle->file_sha1_human);
+    } else {
+        hdfs_handle->cvmfs_graft = concatenate(hdfs_handle->cvmfs_graft, &offset, &size, ";chunk_offsets=0");
+        unsigned int idx;
+        for (idx = 1; idx<hdfs_handle->chunk_count; idx++) {
+            hdfs_handle->cvmfs_graft = concatenate(hdfs_handle->cvmfs_graft, &offset, &size, ",%lld", hdfs_handle->chunk_offsets[idx]);
+        }
+        hdfs_handle->cvmfs_graft = concatenate(hdfs_handle->cvmfs_graft, &offset, &size, ";chunk_checksums=%s", hdfs_handle->chunk_sha1_human[0]);
+        for (idx = 1; idx<hdfs_handle->chunk_count; idx++) {
+            hdfs_handle->cvmfs_graft = concatenate(hdfs_handle->cvmfs_graft, &offset, &size, ",%s", hdfs_handle->chunk_sha1_human[idx]);
+        }
+    }
+}
+
 /*
  *  Initialize all the checksum calculations
  */
@@ -109,7 +218,12 @@ void hdfs_initialize_checksums(hdfs_handle_t *hdfs_handle) {
     if (hdfs_handle->cksm_types & HDFS_CKSM_TYPE_MD5) {
         MD5_Init(&hdfs_handle->md5);
     }
-
+    if (hdfs_handle->cksm_types & HDFS_CKSM_TYPE_CVMFS) {
+        hdfs_handle->file_sha1 = EVP_MD_CTX_create();
+        EVP_DigestInit_ex(hdfs_handle->file_sha1, EVP_sha1(), NULL);
+        hdfs_handle->chunk_sha1 = EVP_MD_CTX_create();
+        EVP_DigestInit_ex(hdfs_handle->chunk_sha1, EVP_sha1(), NULL);
+    }
 }
 
 /*
@@ -136,7 +250,23 @@ void hdfs_update_checksums(hdfs_handle_t *hdfs_handle, globus_byte_t *buffer, gl
     if (hdfs_handle->cksm_types & HDFS_CKSM_TYPE_MD5) {
         MD5_Update(&hdfs_handle->md5, buffer, nbytes);
     }
-
+    if (hdfs_handle->cksm_types & HDFS_CKSM_TYPE_CVMFS) {
+        EVP_DigestUpdate(hdfs_handle->file_sha1, buffer, nbytes);
+        globus_off_t total_bytes = hdfs_handle->cur_chunk_bytes + nbytes;
+        size_t buffer_offset = 0;
+        while (total_bytes >= CVMFS_CHUNK_SIZE) {  // There are at least CVMFS_CHUNK_SIZE bytes to write!
+            globus_size_t new_bytes = CVMFS_CHUNK_SIZE-hdfs_handle->cur_chunk_bytes;
+            EVP_DigestUpdate(hdfs_handle->chunk_sha1, buffer+buffer_offset, new_bytes);
+            hdfs_handle->cur_chunk_bytes = CVMFS_CHUNK_SIZE;
+            buffer_offset += new_bytes;
+            nbytes -= new_bytes;
+            emit_cvmfs_chunk(hdfs_handle);
+            hdfs_handle->cur_chunk_bytes = 0;
+            total_bytes -= CVMFS_CHUNK_SIZE;
+        }
+        EVP_DigestUpdate(hdfs_handle->chunk_sha1, buffer+buffer_offset, nbytes);
+        hdfs_handle->cur_chunk_bytes += nbytes;
+    }
 }
 
 /*
@@ -162,7 +292,7 @@ void hdfs_finalize_checksums(hdfs_handle_t *hdfs_handle) {
     }
     if (hdfs_handle->cksm_types & HDFS_CKSM_TYPE_MD5) {
         MD5_Final(hdfs_handle->md5_output, &hdfs_handle->md5);
-        human_readable_md5(hdfs_handle->md5_output_human, hdfs_handle->md5_output);
+        human_readable_evp(hdfs_handle->md5_output_human, hdfs_handle->md5_output, MD5_DIGEST_LENGTH);
         globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,
             "Checksum MD5: %s\n", hdfs_handle->md5_output_human);
     }
@@ -170,10 +300,20 @@ void hdfs_finalize_checksums(hdfs_handle_t *hdfs_handle) {
         globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,
             "Checksum CRC32: %u\n", hdfs_handle->crc32);
     }
-
+    if (hdfs_handle->cksm_types & HDFS_CKSM_TYPE_CVMFS) {
+        unsigned char sha1_value[EVP_MAX_MD_SIZE];
+        int sha1_len;
+        EVP_DigestFinal_ex(hdfs_handle->file_sha1, sha1_value, &sha1_len);
+        EVP_MD_CTX_destroy(hdfs_handle->file_sha1);
+        human_readable_evp(hdfs_handle->file_sha1_human, sha1_value, sha1_len);
+        emit_cvmfs_chunk(hdfs_handle);
+        EVP_MD_CTX_destroy(hdfs_handle->chunk_sha1);
+        emit_cvmfs_graft(hdfs_handle);
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,
+            "Checksum CVMFS: %s\n", hdfs_handle->cvmfs_graft);
+    }
 }
 
-#define OUTPUT_BUFFER_SIZE 256
 
 /*
  *  Save checksums.
@@ -212,24 +352,29 @@ globus_result_t hdfs_save_checksum(hdfs_handle_t *hdfs_handle) {
         return rc;
     }
 
-    char buffer[OUTPUT_BUFFER_SIZE];
-    unsigned short length = 0;
+    globus_size_t size = OUTPUT_BUFFER_STARTING_SIZE;
+    globus_off_t offset = 0;
+    char *buffer = malloc(size);
     if (hdfs_handle->cksm_types & HDFS_CKSM_TYPE_CKSUM) {
-        length += snprintf(buffer, OUTPUT_BUFFER_SIZE, "CKSUM:%u\n", hdfs_handle->cksum);
+        buffer = concatenate(buffer, &offset, &size, "CKSUM:%u\n", hdfs_handle->cksum);
     }
     if (hdfs_handle->cksm_types & HDFS_CKSM_TYPE_CRC32) {
-        length += snprintf(buffer+length, OUTPUT_BUFFER_SIZE, "CRC32:%u\n", hdfs_handle->crc32);
+        buffer = concatenate(buffer, &offset, &size, "CRC32:%u\n", hdfs_handle->crc32);
     }
     if (hdfs_handle->cksm_types & HDFS_CKSM_TYPE_ADLER32) {
-        length += snprintf(buffer+length, OUTPUT_BUFFER_SIZE, "ADLER32:%s\n", hdfs_handle->adler32_human);
+        buffer = concatenate(buffer, &offset, &size, "ADLER32:%s\n", hdfs_handle->adler32_human);
     }
     if (hdfs_handle->cksm_types & HDFS_CKSM_TYPE_MD5) {
         hdfs_handle->md5_output_human[MD5_DIGEST_LENGTH*2] = '\0';
-        length += snprintf(buffer+length, OUTPUT_BUFFER_SIZE, "MD5:%s\n", hdfs_handle->md5_output_human);
+        buffer = concatenate(buffer, &offset, &size, "MD5:%s\n", hdfs_handle->md5_output_human);
     }
-
-    // Returns # of bytes, -1 on err
-    if (hdfsWrite(fs, fh, buffer, length) < 0) {
+    if (hdfs_handle->cksm_types & HDFS_CKSM_TYPE_CVMFS) {
+        buffer = concatenate(buffer, &offset, &size, "CVMFS:%s\n", hdfs_handle->cvmfs_graft);
+    }
+    if (buffer == NULL) {
+        MemoryError(hdfs_handle, "Failed to allocate checksum string", rc);
+        // Returns # of bytes, -1 on err
+    } else if (hdfsWrite(fs, fh, buffer, strlen(buffer)) < 0) {
         SystemError(hdfs_handle, "Failed to write checksum file", rc);
     }
 
@@ -242,14 +387,81 @@ globus_result_t hdfs_save_checksum(hdfs_handle_t *hdfs_handle) {
         globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "Saved checksums to %s.\n", filename);
     }
 
+    free(buffer);
+
     // Note we purposely leak the filesystem handle, as Hadoop has disconnect issues.
     return rc;
+}
+
+static globus_result_t
+hdfs_calculate_checksum(hdfs_handle_t *hdfs_handle, hdfsFS fs, const char *type)
+{
+    globus_result_t rc = GLOBUS_SUCCESS;
+
+    GlobusGFSName(hdfs_calculate_checksum);
+
+    hdfs_initialize_checksums(hdfs_handle);
+
+    hdfsFile fd = hdfsOpenFile(fs, hdfs_handle->pathname, O_RDONLY, 0, 1, 0);
+    if (fd == NULL) {
+        SystemError(hdfs_handle, "Failed to open file for checksumming", rc)
+        return rc;
+    }
+
+    const size_t cksum_buffer_size = 1024*1024;
+    void *buffer = malloc(cksum_buffer_size);
+    if (buffer == NULL) {
+        MemoryError(hdfs_handle, "Unable to allocate checksum temp buffer", rc);
+        hdfsCloseFile(fs, fd);
+        return rc;
+    }
+    ssize_t retval = 0;
+    globus_off_t offset = 0;
+    do {
+        hdfs_update_checksums(hdfs_handle, buffer, retval);
+        errno = 0;  // older versions of libhdfs sometimes fails to reset errno.
+        retval = hdfsRead(fs, fd, buffer, cksum_buffer_size);
+        if ((retval == -1) && (errno == EINTR)) {continue;}
+        offset += retval;
+    } while (retval > 0);
+    if (retval == -1) {
+        SystemError(hdfs_handle, "Failed to read from file for checksumming", rc);
+        // Fall-through
+    }
+    hdfsCloseFile(fs, fd);
+
+    if (rc == GLOBUS_SUCCESS) {
+        hdfs_handle->offset = offset;
+        hdfs_finalize_checksums(hdfs_handle);
+        rc = hdfs_save_checksum(hdfs_handle);
+    }
+    return rc;
+}
+
+/*
+ * Returns 1 if the requested checksum type is supported; 0 otherwise.
+ */
+static int
+hdfs_checksum_type_supported(hdfs_handle_t *hdfs_handle, const char * requested_cksm) {
+    return (
+            (!strcasecmp("MD5", requested_cksm) && (hdfs_handle->cksm_types & HDFS_CKSM_TYPE_MD5)) ||
+            (!strcasecmp("CKSUM", requested_cksm) && (hdfs_handle->cksm_types & HDFS_CKSM_TYPE_CKSUM)) ||
+            (!strcasecmp("CRC32", requested_cksm) && (hdfs_handle->cksm_types & HDFS_CKSM_TYPE_CRC32)) ||
+            (!strcasecmp("ADLER32", requested_cksm) && (hdfs_handle->cksm_types & HDFS_CKSM_TYPE_ADLER32)) ||
+            (!strcasecmp("CVMFS", requested_cksm) && (hdfs_handle->cksm_types & HDFS_CKSM_TYPE_CVMFS))
+           );
 }
 
 /*
  *  Retrieve checksums.
  */
-globus_result_t hdfs_get_checksum(hdfs_handle_t *hdfs_handle, const char * pathname, const char * requested_cksm, char**cksm_value) {
+static globus_result_t hdfs_get_checksum_internal(hdfs_handle_t *hdfs_handle, const char * pathname, const char * requested_cksm, char**cksm_value, int recurse);
+
+globus_result_t hdfs_get_checksum(hdfs_handle_t *hdfs_handle, const char * pathname, const char * requested_cksm, char ** cksm_value) {
+    return hdfs_get_checksum_internal(hdfs_handle, pathname, requested_cksm, cksm_value, 1);
+}
+
+globus_result_t hdfs_get_checksum_internal(hdfs_handle_t *hdfs_handle, const char * pathname, const char * requested_cksm, char**cksm_value, int recurse) {
 
     globus_result_t rc = GLOBUS_SUCCESS;
 
@@ -257,7 +469,7 @@ globus_result_t hdfs_get_checksum(hdfs_handle_t *hdfs_handle, const char * pathn
 
     hdfsFS fs = hdfsConnectAsUser("default", 0, "root");
     if (fs == NULL) {
-        SystemError(hdfs_handle, "Failure in connecting to HDFS for checksum upload", rc);
+        SystemError(hdfs_handle, "Failure in connecting to HDFS for checksumming.", rc);
         return rc;
     }
 
@@ -278,18 +490,53 @@ globus_result_t hdfs_get_checksum(hdfs_handle_t *hdfs_handle, const char * pathn
 
     hdfsFile fh = hdfsOpenFile(fs, filename, O_RDONLY, 0, 0, 0);
     if (fh == NULL) {
-        SystemError(hdfs_handle, "Failed to open checksum file", rc);
+        rc = hdfs_calculate_checksum(hdfs_handle, fs, requested_cksm);
+        if (rc != GLOBUS_SUCCESS) {return rc;}
+        fh = hdfsOpenFile(fs, filename, O_RDONLY, 0, 0, 0);
+        if (fh == NULL) {
+            SystemError(hdfs_handle, "Failed to open checksum file", rc);
+            return rc;
+        }
+    }
+
+    globus_size_t size = OUTPUT_BUFFER_STARTING_SIZE;
+    char *buffer = malloc(size);
+    char *read_buffer = malloc(OUTPUT_BUFFER_STARTING_SIZE);
+    globus_off_t off = 0;
+    if (!read_buffer || !buffer) {
+        MemoryError(hdfs_handle, "Failed to allocate checksum read buffers", rc);
+        return rc;
+    }
+    tSize retval = 0;
+    do {
+        do {
+            errno = 0;  // Some versions of libhdfs forget to clear errno internally.
+            retval = hdfsRead(fs, fh, read_buffer, OUTPUT_BUFFER_STARTING_SIZE-1);
+        } while ((retval < 0) && errno == EINTR);
+
+        if (retval > 0) {
+            read_buffer[retval] = '\0';
+            buffer = concatenate(buffer, &off, &size, "%s", read_buffer);
+        }
+    } while (retval > 0);
+    free(read_buffer);
+
+    if (retval < 0) {
+        SystemError(hdfs_handle, "Failed to read checksum file", rc);
+        free(buffer);
         return rc;
     }
 
-    char buffer[OUTPUT_BUFFER_SIZE], cksm[OUTPUT_BUFFER_SIZE], *val;
-    buffer[OUTPUT_BUFFER_SIZE-1] = '\0';
-    if (hdfsRead(fs, fh, buffer, OUTPUT_BUFFER_SIZE-1) <= 0) {
-        SystemError(hdfs_handle, "Failed to read checksum file", rc);
-    }
-    unsigned length = 0;
+    unsigned int length = 0;
     const char * ptr = buffer;
+    char *cksm = malloc(size);
+    char *val;
     *cksm_value = NULL;
+    if (!cksm || !buffer) {
+        MemoryError(hdfs_handle, "Failed to allocate checksum parse buffers", rc);
+        free(buffer);
+        return rc;
+    }
     // Raise your hand if you hate string parsing in C.
     while (sscanf(ptr, "%s%n", cksm, &length) == 1) {
         //globus_gfs_log_message(GLOBUS_GFS_LOG_DUMP, "Checksum line: %s.\n", cksm);
@@ -331,11 +578,20 @@ globus_result_t hdfs_get_checksum(hdfs_handle_t *hdfs_handle, const char * pathn
     }
 
     if (*cksm_value == NULL) {
-        GenericError(hdfs_handle, "Failed to retrieve checksum", rc);
+        if (recurse && hdfs_checksum_type_supported(hdfs_handle, requested_cksm)) {
+            // Try clearing the current checksum file and re-opening.
+            hdfsCloseFile(fs, fh);
+            hdfsDelete(fs, filename, 0);
+            rc = hdfs_get_checksum_internal(hdfs_handle, pathname, requested_cksm, cksm_value, 0);
+            fh = hdfsOpenFile(fs, filename, O_RDONLY, 0, 0, 0);
+        }
+        if ((*cksm_value == NULL) && (rc == GLOBUS_SUCCESS)) {
+            GenericError(hdfs_handle, "Failed to retrieve checksum", rc);
+        }
     }
 
-    // return -1 on err
-    if (hdfsCloseFile(fs, fh) < 0) {
+    // return -1 on err; we check for fh being null here as it may have been re-opened if we regenerate the checksum file above.
+    if (fh && (hdfsCloseFile(fs, fh) < 0)) {
         SystemError(hdfs_handle, "Failed to close checksum file", rc);
     }
 
@@ -346,6 +602,8 @@ globus_result_t hdfs_get_checksum(hdfs_handle_t *hdfs_handle, const char * pathn
     if (hdfs_handle->pathname) {
         free(hdfs_handle->pathname);
     }
+    free(cksm);
+    free(buffer);
     // Note we purposely leak the filesystem handle (fs), as Hadoop has disconnect issues.
     return rc;
 }
@@ -366,5 +624,7 @@ hdfs_parse_checksum_types(hdfs_handle_t * hdfs_handle, const char * types) {
     if (strstr(types, "ADLER32")) {
         hdfs_handle->cksm_types |= HDFS_CKSM_TYPE_ADLER32;
     }
-
+    if (strstr(types, "CVMFS")) {
+        hdfs_handle->cksm_types |= HDFS_CKSM_TYPE_CVMFS;
+    }
 }
