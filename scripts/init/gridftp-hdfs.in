@@ -9,21 +9,21 @@
 # Source function library.
 . /etc/rc.d/init.d/functions
 
-exec="@sbindir_resolved@/globus-gridftp-server"
+exec="@CMAKE_INSTALL_PREFIX@/sbin/globus-gridftp-server"
 prog="gridftp-hdfs"
-config="@sysconfdir_resolved@/gridftp-hdfs/gridftp.conf"
+config="@SYSCONF_INSTALL_DIR@/gridftp-hdfs/gridftp.conf"
 
-. @datadir_resolved@/$prog/$prog-environment
+. @SHARE_INSTALL_PREFIX@/$prog/$prog-environment
 
-[ -e @sysconfdir_resolved@/sysconfig/gridftp.conf.d/$prog ] && . @sysconfdir_resolved@/sysconfig/gridftp.conf.d/$prog
+[ -e @SYSCONF_INSTALL_DIR@/sysconfig/gridftp.conf.d/$prog ] && . @SYSCONF_INSTALL_DIR@/sysconfig/gridftp.conf.d/$prog
 
-lockfile=@localstatedir_resolved@/lock/subsys/$prog
+lockfile=/var/lock/subsys/$prog
 
 start() {
     [ -x $exec ] || exit 5
     [ -f $config ] || exit 6
     echo -n $"Starting $prog: "
-    daemon $exec -c $config -pidfile @localstatedir_resolved@/run/$prog.pid
+    daemon $exec -c $config -pidfile /var/run/$prog.pid
     retval=$?
     echo
     [ $retval -eq 0 ] && touch $lockfile
