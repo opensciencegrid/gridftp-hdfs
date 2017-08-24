@@ -1,6 +1,7 @@
 #!/bin/sh
 
-. /usr/share/osg/sysconfig/globus-gridftp-server-plugin
+OSG_CONFIG= /usr/share/osg/sysconfig/globus-gridftp-server-plugin
+[ -e $OSG_CONFIG ] && . $OSG_CONFIG
 
 exec /usr/sbin/globus-gridftp-server -c @sysconfdir_resolved@/gridftp-hdfs/gridftp-inetd.conf -dsi hdfs
 
