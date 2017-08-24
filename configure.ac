@@ -1,6 +1,6 @@
 #                                               -*- Autoconf -*-
 # Process this file with autoconf to produce a configure script.
-AC_INIT([gridftp-hdfs], [0.5.5])
+AC_INIT([gridftp-hdfs], [1.0])
 
 AM_INIT_AUTOMAKE
 

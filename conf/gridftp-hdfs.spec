@@ -1,39 +1,38 @@
-
-# OSG packaging is a bit different from Globus
-%if "0%{?dist}" == "0.osg"
-%define _osg 1
-%else
-%define _osg 0
-%endif
-
+# Have gitrev be the short hash or branch name if doing a prerelease build
+# %define gitrev
 
 Name:           gridftp-hdfs
-Version:        0.5.5
-Release:        1
+Version:        1.0
+Release:        1%{?gitrev:.%{gitrev}git}%{?dist}
 Summary:        HDFS DSI plugin for GridFTP
-
 Group:          System Environment/Daemons
 License:        ASL 2.0
-URL:            http://twiki.grid.iu.edu/bin/view/Storage/HadoopInstallation
-# TODO:  Check if this svn tag is the same as the source tarball available
-# for download.  That might simplify this a bit.
-# svn co svn://t2.unl.edu/brian/gridftp_hdfs
-# cd gridftp_hdfs
-# ./bootstrap
-# ./configure
-# make dist
-Source0:        %{name}-%{version}.tar.gz
+URL:            https://github.com/opensciencegrid/gridftp_hdfs
+# To create:
+#   Release:
+#     git archive --prefix=%{name}-%{version}/ v%{version} | gzip -n > %{name}-%{version}.tar.gz
+#   Prerelease:
+#     git archive --prefix=%{name}-%{version}/ %{gitrev} | gzip -n > %{name}-%{version}-%{gitrev}.tar.gz
+Source0:        %{name}-%{version}%{?gitrev:-%{gitrev}}.tar.gz
+
+Source1: globus-gridftp-server-plugin.osg-sysconfig
+%if 0%{?osg} > 0
+Source2: %{name}.conf
+Source3: %{name}.osg-extensions.conf
+%endif
+
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 
 BuildRequires: autoconf
 BuildRequires: automake
 BuildRequires: libtool
 
-BuildRequires: java7-devel >= 1:1.7.0
+BuildRequires: java-devel >= 1:1.7.0
 BuildRequires: jpackage-utils
 
 BuildRequires: hadoop-libhdfs
-BuildRequires: globus-gridftp-server-devel
+# globus-gridftp-server-devel-11 needed for 2436-enable-ordered-data.patch
+BuildRequires: globus-gridftp-server-devel >= 11
 BuildRequires: globus-common-devel
 
 BuildRequires: chrpath
@@ -46,9 +45,13 @@ Requires: hadoop-client >= 2.0.0+545
 Requires: globus-gridftp-server-progs >= 6.38-1.3
 %if 0%{?osg} > 0
 Requires: xinetd
+Requires: globus-gridftp-osg-extensions
 %endif
 Requires: java >= 1:1.7.0
 Requires: jpackage-utils
+# for ordered data support (SOFTWARE-2436):
+BuildRequires: globus-ftp-control-devel >= 7.7
+Requires: globus-ftp-control >= 7.7
 
 Requires(pre): shadow-utils
 Requires(preun): initscripts
@@ -62,13 +65,18 @@ Requires(postun): xinetd
 %endif
 
 %description
-HDFS DSI plugin for GridFTP 
+HDFS DSI plugin for GridFTP
 
 %prep
 
 %setup -q
 
 %build
+
+aclocal
+libtoolize
+automake --foreign -a
+autoconf
 
 %configure --with-java=/etc/alternatives/java_sdk
 
@@ -79,15 +87,35 @@ rm -rf $RPM_BUILD_ROOT
 
 make DESTDIR=$RPM_BUILD_ROOT install
 
+# Remove rpaths
+chrpath -d $RPM_BUILD_ROOT%{_libdir}/*.so
+
 # Remove libtool turds
 rm -f $RPM_BUILD_ROOT%{_libdir}/*.la
 rm -f $RPM_BUILD_ROOT%{_libdir}/*.a
 
+mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}/gridftp.d
+
 # Remove the init script - in GT5.2, this gets bootstrapped appropriately
-%if %_osg
 rm $RPM_BUILD_ROOT%{_sysconfdir}/init.d/%{name}
-%else
 rm $RPM_BUILD_ROOT%{_sysconfdir}/sysconfig/gridftp.conf.d/%{name}-environment-bootstrap
+
+%if 0%{?osg} > 0
+mv $RPM_BUILD_ROOT%{_sysconfdir}/sysconfig/gridftp.conf.d/%{name} $RPM_BUILD_ROOT%{_sysconfdir}/sysconfig
+rmdir $RPM_BUILD_ROOT%{_sysconfdir}/sysconfig/gridftp.conf.d
+rm $RPM_BUILD_ROOT%{_sysconfdir}/gridftp-hdfs/gridftp.conf
+mkdir -p $RPM_BUILD_ROOT/usr/share/osg/sysconfig
+install -m 644 -p %{SOURCE1} $RPM_BUILD_ROOT/usr/share/osg/sysconfig/globus-gridftp-server-plugin
+install -m 644 %{SOURCE2} $RPM_BUILD_ROOT%{_sysconfdir}/gridftp.d
+install -m 644 %{SOURCE3} $RPM_BUILD_ROOT%{_sysconfdir}/gridftp.d
+%else
+rm $RPM_BUILD_ROOT%{_sysconfdir}/gridftp-hdfs/gridftp-debug.conf
+rm $RPM_BUILD_ROOT%{_sysconfdir}/gridftp-hdfs/gridftp-inetd.conf
+rm $RPM_BUILD_ROOT%{_sysconfdir}/gridftp-hdfs/gridftp.conf
+rm $RPM_BUILD_ROOT%{_sysconfdir}/gridftp-hdfs/replica-map.conf
+rm $RPM_BUILD_ROOT%{_sysconfdir}/xinetd.d/gridftp-hdfs
+rm $RPM_BUILD_ROOT%{_bindir}/gridftp-hdfs-standalone
+rm $RPM_BUILD_ROOT%{_sbindir}/gridftp-hdfs-inetd
 %endif
 
 %clean
@@ -96,7 +124,7 @@ rm -rf $RPM_BUILD_ROOT
 %post
 /sbin/ldconfig
 
-%if %_osg
+%if 0%{?osg} > 0
 /sbin/service globus-gridftp-server condrestart >/dev/null 2>&1 || :
 %else
 /sbin/chkconfig --add %{name}
@@ -104,47 +132,155 @@ rm -rf $RPM_BUILD_ROOT
 
 %preun
 if [ "$1" = "0" ] ; then
+%if 0%{?osg} > 0
     /sbin/service xinetd condrestart >/dev/null 2>&1
-%if %_osg
-    /sbin/service globus-gridftp-server condrestart >/dev/null 2>&1 || :
-%else
-    /sbin/service %{name} stop >/dev/null 2>&1 || :
-    /sbin/chkconfig --del %{name}
 %endif
+    /sbin/service globus-gridftp-server condrestart >/dev/null 2>&1 || :
 fi
 
 %postun
 /sbin/ldconfig
 if [ "$1" -ge "1" ]; then
+%if 0%{?osg} > 0
     /sbin/service xinetd condrestart >/dev/null 2>&1
-%if %_osg
-    /sbin/service globus-gridftp-server condrestart >/dev/null 2>&1 || :
-%else
-    /sbin/service gridftp-hdfs condrestart >/dev/null 2>&1 || :
 %endif
+    /sbin/service globus-gridftp-server condrestart >/dev/null 2>&1 || :
 fi
 
 %files
 %defattr(-,root,root,-)
+%if 0%{?osg} > 0
 %{_sbindir}/gridftp-hdfs-inetd
 %{_bindir}/gridftp-hdfs-standalone
+%endif
 %{_libdir}/libglobus_gridftp_server_hdfs.so*
 %{_datadir}/%{name}/%{name}-environment
+%if 0%{?osg} > 0
 %config(noreplace) %{_sysconfdir}/xinetd.d/%{name}
 %config(noreplace) %{_sysconfdir}/%{name}/gridftp-debug.conf
 %config(noreplace) %{_sysconfdir}/%{name}/gridftp-inetd.conf
-%config(noreplace) %{_sysconfdir}/%{name}/gridftp.conf
 %config(noreplace) %{_sysconfdir}/%{name}/replica-map.conf
-%config(noreplace) %{_sysconfdir}/sysconfig/gridftp.conf.d/%{name}
-%if %_osg
-%{_sysconfdir}/sysconfig/gridftp.conf.d/%{name}-environment-bootstrap
+%config(noreplace) %{_sysconfdir}/sysconfig/%{name}
+%config(noreplace) %{_sysconfdir}/gridftp.d/%{name}.conf
+%config(noreplace) %{_sysconfdir}/gridftp.d/%{name}.osg-extensions.conf
+/usr/share/osg/sysconfig/globus-gridftp-server-plugin
 %else
-%{_sysconfdir}/init.d/%{name}
+%config(noreplace) %{_sysconfdir}/sysconfig/gridftp.conf.d/%{name}
 %endif
 
 %changelog
+* Thu Aug 24 2017 Mátyás Selmeci <matyas@cs.wisc.edu> - 1.0-1
+- Update to latest version from github (SOFTWARE-2856)
+- Remove upstreamed patches
+
+* Thu Dec 22 2016 Carl Edquist <edquist@cs.wisc.edu> - 0.5.4-25.5
+- Bump to rebuild against globus-gridftp-server 11.8 (SOFTWARE-2436)
+
+* Fri Aug 26 2016 Mátyás Selmeci <matyas@cs.wisc.edu> - 0.5.4-25.4
+- Add patch to enable ordered data (SOFTWARE-2436)
+  - Adds dependency on globus-ftp-control >= 7.7
+  - Adds build dependency on globus-gridftp-server >= 11
+
+* Thu Jul 21 2016 Carl Edquist <edquist@cs.wisc.edu> - 0.5.4-25.3
+- Config file fixes for globus-gridftp-osg-extensions (SOFTWARE-2397)
+
+* Wed Jul 20 2016 Carl Edquist <edquist@cs.wisc.edu> - 0.5.4-25.2
+- Use globus-gridftp-osg-extensions (SOFTWARE-2397)
+
+* Thu Jun 30 2016 Brian Bockelman <bbockelm@cse.unl.edu> - 0.5.4-25.1
+- Fix bug with listing empty directories.
+
+* Mon Feb 22 2016 Carl Edquist <edquist@cs.wisc.edu> - 0.5.4-25.osg
+- Rebuild against hadoop-2.0.0+1612 (SOFTWARE-2161)
+
+* Tue Dec 21 2015  Edgar Fajardo <emfajard@ucsd.edu> - 0.5.4-24.osg
+- Update to include the patch (SOFTWARE-2107) to deal with mkdir and rename
+
+* Tue Dec 8 2015 Edgar Fajardo <emfajard@ucsd.edu> - 0.5.4-23.osg
+- Update to include the patch (SOFTWARE-2115) to deal with load limits
+
+* Wed Sep 2 2015 Edgar Fajardo <emfajard@ucsd.edu> - 0.5.4-22.osg
+- Update to the patch (SOFTWARE-2011) to correctly deal when replication errors
+
+* Mon Aug 31 2015 Edgar Fajardo <emfajard@ucsd.edu> - 0.5.4-21.osg
+- Applied patch to capture stderr to the gridftp-auth log (SOFTWARE-2011)
+
 * Mon Aug 24 2015 Brian Bockelman <bbockelm@cse.unl.edu> - 0.5.5-1
 - Fix checksum verification with gfal2.
+
+* Mon Aug 24 2015 Edgar Fajardo <emfajard@ucsd.edu> - 0.5.4-20.osg
+- Changed checksum names (adler32, md5, etc) to be case-insensitive (SOFTWARE-2006)
+
+* Tue Sep 30 2014 Carl Edquist <edquist@cs.wisc.edu> - 0.5.4-19.osg
+- Limit concurrency to 1 for no-parallelism transfers (SOFTWARE-1495)
+
+* Thu Jun 19 2014 Carl Edquist <edquist@cs.wisc.edu> - 0.5.4-18.osg
+- Mutex fix for GLOBUS_THREAD_MODEL="pthread" (SOFTWARE-1495)
+
+* Wed May 21 2014 Mátyás Selmeci <matyas@cs.wisc.edu> - 0.5.4-17.osg
+- Remove rpath (SOFTWARE-1394)
+
+* Wed Apr 16 2014 Carl Edquist <edquist@cs.wisc.edu> - 0.5.4-15.osg
+- Remove conflicting /etc/gridftp.d notion from non-osg builds (SOFTWARE-1439)
+
+* Wed Apr 09 2014 Carl Edquist <edquist@cs.wisc.edu> - 0.5.4-14.osg
+- Move hdfs-specific config into /etc/gridftp.d (SOFTWARE-1439)
+
+* Thu Apr 03 2014 Carl Edquist <edquist@cs.wisc.edu> - 0.5.4-13.osg
+- Update globus-gridftp-server version requirement (SOFTWARE-1412)
+
+* Thu Mar 27 2014 Carl Edquist <edquist@cs.wisc.edu> - 0.5.4-12.osg
+- Add 1412-gridftp_d.patch to use /etc/gridftp.d config dir (SOFTWARE-1412)
+
+* Tue Mar 04 2014 Mátyás Selmeci <matyas@cs.wisc.edu> 0.5.4-11.osg
+- Add 1410-environment.patch to fix problem with not finding libjsig.so in systems with OpenJDK (SOFTWARE-1410)
+
+* Wed Jan 15 2014 Matyas Selmeci <matyas@cs.wisc.edu> - 0.5.4-10.osg
+- Merged upstream changes as of GT 5.2.5 (SOFTWARE-1317)
+- Remove gridftp-hdfs-config.patch
+- Remove gridftp-hdfs-classpath.patch
+
+* Fri May 31 2013 Matyas Selmeci <matyas@cs.wisc.edu> - 0.5.4-9
+- Add hadoop-client dependency
+
+* Thu May 30 2013 Matyas Selmeci <matyas@cs.wisc.edu> - 0.5.4-8
+- Bump to rebuild against hadoop 2.0 built with OpenJDK 7
+
+* Tue Feb 26 2013 Carl Edquist <edquist@cs.wisc.edu> - 0.5.4-7
+- Update to build with OpenJDK 7; require java7-devel + jpackage-utils
+
+* Tue Feb 19 2013 Dave Dykstra <dwd@fnal.gov> - 0.5.4-6.osg
+- Change sysconfig arrangement to use /usr/share/osg/sysconfig
+  for OSG replaceable additions, and /etc/sysconfig/gridftp-hdfs
+  for non-replaceable variables specific to gridftp-hdfs.
+  Always include /usr/share/osg/sysconfig/globus-gridftp-server
+  environment, which also pulls in hdfs-specific variables via
+  a plugin file.
+
+* Wed Jan 23 2013 Doug Strain <dstrain@fnal.gov> - 0.5.4-5
+- Rebuild for Gridftp 6.14
+
+* Wed Aug 1 2012 Doug Strain <dstrain@fnal.gov> - 0.5.4-4
+- Added patch to LD_LIBRARY_PATH for /usr/lib/hadoop/lib/native
+
+* Thu Jul 19 2012 Doug Strain <dstrain@fnal.gov> - 0.5.4-3
+- Changing requirements to use any version of libhdfs
+- Also updating hdfsDelete and gridftp-hdfs-environment
+- In preparation of hadoop-2.0.0 upgrade
+
+* Wed May 30 2012 Doug Strain <dstrain@fnal.gov> - 0.5.3-6
+- Patch to hdfs stat so it actually finds uid and gid
+- Also, delete function was missing, so I wrote a DELE function
+- Fixed mkdir that was using the wrong path
+- This fixes uberftp issues
+
+* Wed May 9 2012 Doug Strain <dstrain@fnal.gov> - 0.5.3-5
+- Added new LCMAPs options to sysconfig
+- Changed location of sysconfig information in standalone+inetd scripts
+
+* Fri Apr 13 2012 Doug Strain <dstrain@fnal.gov> - 0.5.3-2
+- Added dist tag
+- Switched to using jdk for SL6
 
 * Tue Dec 06 2011 Brian Bockelman <bbockelm@cse.unl.edu> - 0.5.3-1
 - Initial support for GlobusOnline.
