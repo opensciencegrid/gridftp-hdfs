@@ -40,14 +40,15 @@ add_library(globus_gridftp_server_hdfs MODULE
            )
 target_link_libraries(globus_gridftp_server_hdfs -lz -lrt -pthread ${HDFS_LIB} ${GLOBUS_GRIDFTP_SERVER_LIBRARIES} ${GLOBUS_COMMON_LIBRARIES} ${OPENSSL_LIBRARIES})
 
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/conf/gridftp-inetd.conf.in ${CMAKE_CURRENT_BINARY_DIR}/conf/gridftp-inetd.conf @ONLY)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/scripts/gridftp-hdfs-standalone.in ${CMAKE_CURRENT_BINARY_DIR}/scripts/gridftp-hdfs-standalone @ONLY)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/scripts/init/gridftp-hdfs.in ${CMAKE_CURRENT_BINARY_DIR}/scripts/init/gridftp-hdfs @ONLY)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/scripts/xinetd/gridftp-hdfs.in ${CMAKE_CURRENT_BINARY_DIR}/scripts/xinetd/gridftp-hdfs @ONLY)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/scripts/xinetd/gridftp-hdfs-inetd.in ${CMAKE_CURRENT_BINARY_DIR}/scripts/xinetd/gridftp-hdfs-inetd @ONLY)
 
-SET(LIB_INSTALL_DIR "${CMAKE_INSTALL_PREFIX}/lib" CACHE INTERNAL "Install path for libraries")
-SET(SHARE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}/share" CACHE INTERNAL "Data directory for helper files")
-SET(SYSCONF_INSTALL_DIR "${CMAKE_INSTALL_PREFIX}/etc" CACHE INTERNAL "System configuration directory")
+SET(LIB_INSTALL_DIR "${CMAKE_INSTALL_PREFIX}/lib" CACHE PATH "Install path for libraries")
+SET(SHARE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}/share" CACHE PATH "Data directory for helper files")
+SET(SYSCONF_INSTALL_DIR "${CMAKE_INSTALL_PREFIX}/etc" CACHE PATH "System configuration directory")
 
 install(
   TARGETS globus_gridftp_server_hdfs
@@ -69,7 +70,12 @@ set_target_properties(
   LINK_INTERFACE_LIBRARIES "" )
 
 install(
-  FILES ${CMAKE_SOURCE_DIR}/conf/gridftp.conf ${CMAKE_SOURCE_DIR}/conf/gridftp-inetd.conf ${CMAKE_SOURCE_DIR}/conf/gridftp-debug.conf ${CMAKE_SOURCE_DIR}/conf/replica-map.conf
+  FILES ${CMAKE_CURRENT_BINARY_DIR}/scripts/xinetd/gridftp-hdfs
+  DESTINATION ${SYSCONF_INSTALL_DIR}/xinetd.d
+)
+
+install(
+  FILES ${CMAKE_SOURCE_DIR}/conf/gridftp.conf ${CMAKE_CURRENT_BINARY_DIR}/conf/gridftp-inetd.conf ${CMAKE_SOURCE_DIR}/conf/gridftp-debug.conf ${CMAKE_SOURCE_DIR}/conf/replica-map.conf
   DESTINATION ${SYSCONF_INSTALL_DIR}/gridftp-hdfs
 )
 
