@@ -219,7 +219,7 @@ setup_hdfs_logging()
     pthread_attr_t attr;
     if ((err = pthread_attr_init(&attr)))
     {
-        globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Unable to initialize pthread attribute: (errno=%d, %s).\n", err, sterror(err));
+        globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Unable to initialize pthread attribute: (errno=%d, %s).\n", err, strerror(err));
         globus_mutex_unlock(&g_hdfs_mutex);
         return;
     }
