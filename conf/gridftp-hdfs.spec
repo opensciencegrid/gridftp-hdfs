@@ -61,7 +61,7 @@ HDFS DSI plugin for GridFTP
 
 %build
 
-%cmake
+%cmake -DLIB_INSTALL_DIR=%{_libdir}
 
 make %{?_smp_mflags}
 
