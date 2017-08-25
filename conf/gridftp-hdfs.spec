@@ -16,16 +16,12 @@ URL:            https://github.com/opensciencegrid/gridftp_hdfs
 Source0:        %{name}-%{version}%{?gitrev:-%{gitrev}}.tar.gz
 
 Source1: globus-gridftp-server-plugin.osg-sysconfig
-%if 0%{?osg} > 0
 Source2: %{name}.conf
 Source3: %{name}.osg-extensions.conf
-%endif
 
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 
-BuildRequires: autoconf
-BuildRequires: automake
-BuildRequires: libtool
+BuildRequires: cmake
 
 BuildRequires: java-devel >= 1:1.7.0
 BuildRequires: jpackage-utils
@@ -35,18 +31,14 @@ BuildRequires: hadoop-libhdfs
 BuildRequires: globus-gridftp-server-devel >= 11
 BuildRequires: globus-common-devel
 
-BuildRequires: chrpath
-
 Requires: hadoop-libhdfs
 Requires: hadoop-client >= 2.0.0+545
 # ^ was getting "No FileSystem for scheme: hdfs" without this
 # 6.14-2 added OSG plugin-style sysconfig instead of gridftp.conf.d
 # 6.38-1.3 added /etc/gridftp.d
 Requires: globus-gridftp-server-progs >= 6.38-1.3
-%if 0%{?osg} > 0
 Requires: xinetd
 Requires: globus-gridftp-osg-extensions
-%endif
 Requires: java >= 1:1.7.0
 Requires: jpackage-utils
 # for ordered data support (SOFTWARE-2436):
@@ -55,14 +47,10 @@ Requires: globus-ftp-control >= 7.7
 
 Requires(pre): shadow-utils
 Requires(preun): initscripts
-%if 0%{?osg} == 0
 Requires(preun): chkconfig
 Requires(post): chkconfig
-%endif
 Requires(postun): initscripts
-%if 0%{?osg} > 0
 Requires(postun): xinetd
-%endif
 
 %description
 HDFS DSI plugin for GridFTP
@@ -73,12 +61,7 @@ HDFS DSI plugin for GridFTP
 
 %build
 
-aclocal
-libtoolize
-automake --foreign -a
-autoconf
-
-%configure --with-java=/etc/alternatives/java_sdk
+%cmake
 
 make %{?_smp_mflags}
 
@@ -87,20 +70,12 @@ rm -rf $RPM_BUILD_ROOT
 
 make DESTDIR=$RPM_BUILD_ROOT install
 
-# Remove rpaths
-chrpath -d $RPM_BUILD_ROOT%{_libdir}/*.so
-
-# Remove libtool turds
-rm -f $RPM_BUILD_ROOT%{_libdir}/*.la
-rm -f $RPM_BUILD_ROOT%{_libdir}/*.a
-
 mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}/gridftp.d
 
 # Remove the init script - in GT5.2, this gets bootstrapped appropriately
 rm $RPM_BUILD_ROOT%{_sysconfdir}/init.d/%{name}
 rm $RPM_BUILD_ROOT%{_sysconfdir}/sysconfig/gridftp.conf.d/%{name}-environment-bootstrap
 
-%if 0%{?osg} > 0
 mv $RPM_BUILD_ROOT%{_sysconfdir}/sysconfig/gridftp.conf.d/%{name} $RPM_BUILD_ROOT%{_sysconfdir}/sysconfig
 rmdir $RPM_BUILD_ROOT%{_sysconfdir}/sysconfig/gridftp.conf.d
 rm $RPM_BUILD_ROOT%{_sysconfdir}/gridftp-hdfs/gridftp.conf
@@ -108,15 +83,6 @@ mkdir -p $RPM_BUILD_ROOT/usr/share/osg/sysconfig
 install -m 644 -p %{SOURCE1} $RPM_BUILD_ROOT/usr/share/osg/sysconfig/globus-gridftp-server-plugin
 install -m 644 %{SOURCE2} $RPM_BUILD_ROOT%{_sysconfdir}/gridftp.d
 install -m 644 %{SOURCE3} $RPM_BUILD_ROOT%{_sysconfdir}/gridftp.d
-%else
-rm $RPM_BUILD_ROOT%{_sysconfdir}/gridftp-hdfs/gridftp-debug.conf
-rm $RPM_BUILD_ROOT%{_sysconfdir}/gridftp-hdfs/gridftp-inetd.conf
-rm $RPM_BUILD_ROOT%{_sysconfdir}/gridftp-hdfs/gridftp.conf
-rm $RPM_BUILD_ROOT%{_sysconfdir}/gridftp-hdfs/replica-map.conf
-rm $RPM_BUILD_ROOT%{_sysconfdir}/xinetd.d/gridftp-hdfs
-rm $RPM_BUILD_ROOT%{_bindir}/gridftp-hdfs-standalone
-rm $RPM_BUILD_ROOT%{_sbindir}/gridftp-hdfs-inetd
-%endif
 
 %clean
 rm -rf $RPM_BUILD_ROOT
@@ -124,38 +90,28 @@ rm -rf $RPM_BUILD_ROOT
 %post
 /sbin/ldconfig
 
-%if 0%{?osg} > 0
 /sbin/service globus-gridftp-server condrestart >/dev/null 2>&1 || :
-%else
 /sbin/chkconfig --add %{name}
-%endif
 
 %preun
 if [ "$1" = "0" ] ; then
-%if 0%{?osg} > 0
     /sbin/service xinetd condrestart >/dev/null 2>&1
-%endif
     /sbin/service globus-gridftp-server condrestart >/dev/null 2>&1 || :
 fi
 
 %postun
 /sbin/ldconfig
 if [ "$1" -ge "1" ]; then
-%if 0%{?osg} > 0
     /sbin/service xinetd condrestart >/dev/null 2>&1
-%endif
     /sbin/service globus-gridftp-server condrestart >/dev/null 2>&1 || :
 fi
 
 %files
 %defattr(-,root,root,-)
-%if 0%{?osg} > 0
 %{_sbindir}/gridftp-hdfs-inetd
 %{_bindir}/gridftp-hdfs-standalone
-%endif
 %{_libdir}/libglobus_gridftp_server_hdfs.so*
 %{_datadir}/%{name}/%{name}-environment
-%if 0%{?osg} > 0
 %config(noreplace) %{_sysconfdir}/xinetd.d/%{name}
 %config(noreplace) %{_sysconfdir}/%{name}/gridftp-debug.conf
 %config(noreplace) %{_sysconfdir}/%{name}/gridftp-inetd.conf
@@ -164,9 +120,6 @@ fi
 %config(noreplace) %{_sysconfdir}/gridftp.d/%{name}.conf
 %config(noreplace) %{_sysconfdir}/gridftp.d/%{name}.osg-extensions.conf
 /usr/share/osg/sysconfig/globus-gridftp-server-plugin
-%else
-%config(noreplace) %{_sysconfdir}/sysconfig/gridftp.conf.d/%{name}
-%endif
 
 %changelog
 * Thu Aug 24 2017 Mátyás Selmeci <matyas@cs.wisc.edu> - 1.0-1
