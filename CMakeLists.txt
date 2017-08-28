@@ -75,18 +75,13 @@ install(
 )
 
 install(
-  FILES ${CMAKE_SOURCE_DIR}/conf/gridftp.conf ${CMAKE_CURRENT_BINARY_DIR}/conf/gridftp-inetd.conf ${CMAKE_SOURCE_DIR}/conf/gridftp-debug.conf ${CMAKE_SOURCE_DIR}/conf/replica-map.conf
+  FILES ${CMAKE_CURRENT_BINARY_DIR}/conf/gridftp-inetd.conf ${CMAKE_SOURCE_DIR}/conf/gridftp-debug.conf ${CMAKE_SOURCE_DIR}/conf/replica-map.conf
   DESTINATION ${SYSCONF_INSTALL_DIR}/gridftp-hdfs
 )
 
 install(
-  FILES ${CMAKE_CURRENT_BINARY_DIR}/scripts/init/gridftp-hdfs
-  DESTINATION ${SYSCONF_INSTALL_DIR}/init.d/
-)
-
-install(
-  FILES ${CMAKE_SOURCE_DIR}/conf/gridftp-hdfs ${CMAKE_SOURCE_DIR}/conf/gridftp-hdfs-environment-bootstrap
-  DESTINATION ${SYSCONF_INSTALL_DIR}/sysconfig/gridftp.conf.d
+  FILES ${CMAKE_SOURCE_DIR}/conf/gridftp-hdfs
+  DESTINATION ${SYSCONF_INSTALL_DIR}/sysconfig
 )
 
 install(
