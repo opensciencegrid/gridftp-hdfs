@@ -43,8 +43,6 @@ Requires: globus-ftp-control >= 7.7
 
 Requires(pre): shadow-utils
 Requires(preun): initscripts
-Requires(preun): chkconfig
-Requires(post): chkconfig
 Requires(postun): initscripts
 Requires(postun): xinetd
 
@@ -73,7 +71,6 @@ rm -rf $RPM_BUILD_ROOT
 /sbin/ldconfig
 
 /sbin/service globus-gridftp-server condrestart >/dev/null 2>&1 || :
-/sbin/chkconfig --add %{name}
 
 %preun
 if [ "$1" = "0" ] ; then
