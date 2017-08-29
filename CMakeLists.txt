@@ -42,7 +42,6 @@ target_link_libraries(globus_gridftp_server_hdfs -lz -lrt -pthread ${HDFS_LIB} $
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/conf/gridftp-inetd.conf.in ${CMAKE_CURRENT_BINARY_DIR}/conf/gridftp-inetd.conf @ONLY)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/scripts/gridftp-hdfs-standalone.in ${CMAKE_CURRENT_BINARY_DIR}/scripts/gridftp-hdfs-standalone @ONLY)
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/scripts/init/gridftp-hdfs.in ${CMAKE_CURRENT_BINARY_DIR}/scripts/init/gridftp-hdfs @ONLY)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/scripts/xinetd/gridftp-hdfs.in ${CMAKE_CURRENT_BINARY_DIR}/scripts/xinetd/gridftp-hdfs @ONLY)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/scripts/xinetd/gridftp-hdfs-inetd.in ${CMAKE_CURRENT_BINARY_DIR}/scripts/xinetd/gridftp-hdfs-inetd @ONLY)
 
