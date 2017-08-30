@@ -15,10 +15,6 @@ URL:            https://github.com/opensciencegrid/gridftp_hdfs
 #     git archive --prefix=%{name}-%{version}/ %{gitrev} | gzip -n > %{name}-%{version}-%{gitrev}.tar.gz
 Source0:        %{name}-%{version}%{?gitrev:-%{gitrev}}.tar.gz
 
-Source1: globus-gridftp-server-plugin.osg-sysconfig
-Source2: %{name}.conf
-Source3: %{name}.osg-extensions.conf
-
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 
 BuildRequires: cmake
@@ -47,8 +43,6 @@ Requires: globus-ftp-control >= 7.7
 
 Requires(pre): shadow-utils
 Requires(preun): initscripts
-Requires(preun): chkconfig
-Requires(post): chkconfig
 Requires(postun): initscripts
 Requires(postun): xinetd
 
@@ -61,7 +55,7 @@ HDFS DSI plugin for GridFTP
 
 %build
 
-%cmake
+%cmake -DLIB_INSTALL_DIR=%{_libdir}
 
 make %{?_smp_mflags}
 
@@ -70,20 +64,6 @@ rm -rf $RPM_BUILD_ROOT
 
 make DESTDIR=$RPM_BUILD_ROOT install
 
-mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}/gridftp.d
-
-# Remove the init script - in GT5.2, this gets bootstrapped appropriately
-rm $RPM_BUILD_ROOT%{_sysconfdir}/init.d/%{name}
-rm $RPM_BUILD_ROOT%{_sysconfdir}/sysconfig/gridftp.conf.d/%{name}-environment-bootstrap
-
-mv $RPM_BUILD_ROOT%{_sysconfdir}/sysconfig/gridftp.conf.d/%{name} $RPM_BUILD_ROOT%{_sysconfdir}/sysconfig
-rmdir $RPM_BUILD_ROOT%{_sysconfdir}/sysconfig/gridftp.conf.d
-rm $RPM_BUILD_ROOT%{_sysconfdir}/gridftp-hdfs/gridftp.conf
-mkdir -p $RPM_BUILD_ROOT/usr/share/osg/sysconfig
-install -m 644 -p %{SOURCE1} $RPM_BUILD_ROOT/usr/share/osg/sysconfig/globus-gridftp-server-plugin
-install -m 644 %{SOURCE2} $RPM_BUILD_ROOT%{_sysconfdir}/gridftp.d
-install -m 644 %{SOURCE3} $RPM_BUILD_ROOT%{_sysconfdir}/gridftp.d
-
 %clean
 rm -rf $RPM_BUILD_ROOT
 
@@ -91,7 +71,6 @@ rm -rf $RPM_BUILD_ROOT
 /sbin/ldconfig
 
 /sbin/service globus-gridftp-server condrestart >/dev/null 2>&1 || :
-/sbin/chkconfig --add %{name}
 
 %preun
 if [ "$1" = "0" ] ; then
@@ -119,7 +98,7 @@ fi
 %config(noreplace) %{_sysconfdir}/sysconfig/%{name}
 %config(noreplace) %{_sysconfdir}/gridftp.d/%{name}.conf
 %config(noreplace) %{_sysconfdir}/gridftp.d/%{name}.osg-extensions.conf
-/usr/share/osg/sysconfig/globus-gridftp-server-plugin
+%{_datarootdir}/osg/sysconfig/globus-gridftp-server-plugin
 
 %changelog
 * Thu Aug 24 2017 Mátyás Selmeci <matyas@cs.wisc.edu> - 1.0-1

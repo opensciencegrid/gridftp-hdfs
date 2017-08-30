@@ -42,7 +42,6 @@ target_link_libraries(globus_gridftp_server_hdfs -lz -lrt -pthread ${HDFS_LIB} $
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/conf/gridftp-inetd.conf.in ${CMAKE_CURRENT_BINARY_DIR}/conf/gridftp-inetd.conf @ONLY)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/scripts/gridftp-hdfs-standalone.in ${CMAKE_CURRENT_BINARY_DIR}/scripts/gridftp-hdfs-standalone @ONLY)
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/scripts/init/gridftp-hdfs.in ${CMAKE_CURRENT_BINARY_DIR}/scripts/init/gridftp-hdfs @ONLY)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/scripts/xinetd/gridftp-hdfs.in ${CMAKE_CURRENT_BINARY_DIR}/scripts/xinetd/gridftp-hdfs @ONLY)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/scripts/xinetd/gridftp-hdfs-inetd.in ${CMAKE_CURRENT_BINARY_DIR}/scripts/xinetd/gridftp-hdfs-inetd @ONLY)
 
@@ -75,18 +74,13 @@ install(
 )
 
 install(
-  FILES ${CMAKE_SOURCE_DIR}/conf/gridftp.conf ${CMAKE_CURRENT_BINARY_DIR}/conf/gridftp-inetd.conf ${CMAKE_SOURCE_DIR}/conf/gridftp-debug.conf ${CMAKE_SOURCE_DIR}/conf/replica-map.conf
+  FILES ${CMAKE_CURRENT_BINARY_DIR}/conf/gridftp-inetd.conf ${CMAKE_SOURCE_DIR}/conf/gridftp-debug.conf ${CMAKE_SOURCE_DIR}/conf/replica-map.conf
   DESTINATION ${SYSCONF_INSTALL_DIR}/gridftp-hdfs
 )
 
 install(
-  FILES ${CMAKE_CURRENT_BINARY_DIR}/scripts/init/gridftp-hdfs
-  DESTINATION ${SYSCONF_INSTALL_DIR}/init.d/
-)
-
-install(
-  FILES ${CMAKE_SOURCE_DIR}/conf/gridftp-hdfs ${CMAKE_SOURCE_DIR}/conf/gridftp-hdfs-environment-bootstrap
-  DESTINATION ${SYSCONF_INSTALL_DIR}/sysconfig/gridftp.conf.d
+  FILES ${CMAKE_SOURCE_DIR}/conf/gridftp-hdfs
+  DESTINATION ${SYSCONF_INSTALL_DIR}/sysconfig
 )
 
 install(
