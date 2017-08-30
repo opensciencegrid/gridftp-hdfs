@@ -125,7 +125,7 @@ fi
 * Mon Feb 22 2016 Carl Edquist <edquist@cs.wisc.edu> - 0.5.4-25.osg
 - Rebuild against hadoop-2.0.0+1612 (SOFTWARE-2161)
 
-* Tue Dec 21 2015  Edgar Fajardo <emfajard@ucsd.edu> - 0.5.4-24.osg
+* Tue Dec 22 2015  Edgar Fajardo <emfajard@ucsd.edu> - 0.5.4-24.osg
 - Update to include the patch (SOFTWARE-2107) to deal with mkdir and rename
 
 * Tue Dec 8 2015 Edgar Fajardo <emfajard@ucsd.edu> - 0.5.4-23.osg
