@@ -168,6 +168,13 @@ hdfs_send(
 
     hdfs_dispatch_read(hdfs_handle);
 
+    // Handle zero length transfers
+    if (is_done(hdfs_handle) && hdfs_handle->outstanding == 0)
+    {
+        rc = close_and_clean(hdfs_handle, GLOBUS_SUCCESS);
+        globus_gridftp_server_finished_transfer(op, rc);
+    }
+
 cleanup:
 
     if (rc != GLOBUS_SUCCESS) {
