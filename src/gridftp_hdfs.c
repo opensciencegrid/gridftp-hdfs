@@ -259,6 +259,27 @@ setup_hdfs_logging()
     
 }
 
+static void
+destroy_hdfs_logging()
+{
+    if (g_thread_id > 0)
+    {
+        if (g_thread_pipe_fd >= 0)
+        {
+            fflush(stderr);
+            close(g_thread_pipe_fd);
+        }
+        void *retval;
+        pthread_join(g_thread_id, &retval);
+        g_thread_id = 0;
+        g_thread_pipe_fd = -1;
+    }
+
+    globus_mutex_destroy(&g_hdfs_mutex);
+    g_thread_id = 0;
+    g_thread_pipe_fd = -1;
+}
+
 /*
  *  Called when the HDFS module is activated.
  *  Initializes the global mutex.
@@ -289,23 +310,6 @@ hdfs_activate(void)
 int
 hdfs_deactivate(void)
 {
-    if (g_thread_id > 0)
-    {
-        if (g_thread_pipe_fd >= 0)
-        {
-            fflush(stderr);
-            close(g_thread_pipe_fd);
-        }
-        void *retval;
-        pthread_join(g_thread_id, &retval);
-        g_thread_id = 0;
-        g_thread_pipe_fd = -1;
-    }
-
-    globus_mutex_destroy(&g_hdfs_mutex);
-    g_thread_id = 0;
-    g_thread_pipe_fd = -1;
-
     globus_extension_registry_remove(
         GLOBUS_GFS_DSI_REGISTRY, "hdfs");
 
@@ -849,6 +853,8 @@ hdfs_destroy(
         globus_free(hdfs_handle);
         free(hdfs_handle->cvmfs_graft);
     }
+
+    destroy_hdfs_logging();
     closelog();
 }
 
