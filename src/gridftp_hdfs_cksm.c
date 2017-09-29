@@ -394,7 +394,7 @@ globus_result_t hdfs_save_checksum(hdfs_handle_t *hdfs_handle) {
 }
 
 static globus_result_t
-hdfs_calculate_checksum(hdfs_handle_t *hdfs_handle, hdfsFS fs, const char *type)
+hdfs_calculate_checksum(hdfs_handle_t *hdfs_handle, const char *type)
 {
     globus_result_t rc = GLOBUS_SUCCESS;
 
@@ -402,7 +402,7 @@ hdfs_calculate_checksum(hdfs_handle_t *hdfs_handle, hdfsFS fs, const char *type)
 
     hdfs_initialize_checksums(hdfs_handle);
 
-    hdfsFile fd = hdfsOpenFile(fs, hdfs_handle->pathname, O_RDONLY, 0, 1, 0);
+    hdfsFile fd = hdfsOpenFile(hdfs_handle->fs, hdfs_handle->pathname, O_RDONLY, 0, 1, 0);
     if (fd == NULL) {
         SystemError(hdfs_handle, "Failed to open file for checksumming", rc)
         return rc;
@@ -412,7 +412,7 @@ hdfs_calculate_checksum(hdfs_handle_t *hdfs_handle, hdfsFS fs, const char *type)
     void *buffer = malloc(cksum_buffer_size);
     if (buffer == NULL) {
         MemoryError(hdfs_handle, "Unable to allocate checksum temp buffer", rc);
-        hdfsCloseFile(fs, fd);
+        hdfsCloseFile(hdfs_handle->fs, fd);
         return rc;
     }
     ssize_t retval = 0;
@@ -420,7 +420,7 @@ hdfs_calculate_checksum(hdfs_handle_t *hdfs_handle, hdfsFS fs, const char *type)
     do {
         hdfs_update_checksums(hdfs_handle, buffer, retval);
         errno = 0;  // older versions of libhdfs sometimes fails to reset errno.
-        retval = hdfsRead(fs, fd, buffer, cksum_buffer_size);
+        retval = hdfsRead(hdfs_handle->fs, fd, buffer, cksum_buffer_size);
         if ((retval == -1) && (errno == EINTR)) {continue;}
         offset += retval;
     } while (retval > 0);
@@ -428,7 +428,7 @@ hdfs_calculate_checksum(hdfs_handle_t *hdfs_handle, hdfsFS fs, const char *type)
         SystemError(hdfs_handle, "Failed to read from file for checksumming", rc);
         // Fall-through
     }
-    hdfsCloseFile(fs, fd);
+    hdfsCloseFile(hdfs_handle->fs, fd);
 
     if (rc == GLOBUS_SUCCESS) {
         hdfs_handle->offset = offset;
@@ -490,7 +490,7 @@ globus_result_t hdfs_get_checksum_internal(hdfs_handle_t *hdfs_handle, const cha
 
     hdfsFile fh = hdfsOpenFile(fs, filename, O_RDONLY, 0, 0, 0);
     if (fh == NULL) {
-        rc = hdfs_calculate_checksum(hdfs_handle, fs, requested_cksm);
+        rc = hdfs_calculate_checksum(hdfs_handle, requested_cksm);
         if (rc != GLOBUS_SUCCESS) {return rc;}
         fh = hdfsOpenFile(fs, filename, O_RDONLY, 0, 0, 0);
         if (fh == NULL) {
