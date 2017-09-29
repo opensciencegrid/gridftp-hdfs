@@ -51,10 +51,6 @@ static void hdfs_command(globus_gfs_operation_t, globus_gfs_command_info_t *, vo
 static void hdfs_start(globus_gfs_operation_t, globus_gfs_session_info_t *);
 
 void
-hdfs_destroy(
-    void *                              user_arg);
-
-void
 hdfs_start(
     globus_gfs_operation_t              op,
     globus_gfs_session_info_t *         session_info);
@@ -850,8 +846,9 @@ hdfs_destroy(
             globus_mutex_destroy(hdfs_handle->mutex);
             globus_free(hdfs_handle->mutex);
         }
+        if (hdfs_handle->cvmfs_graft)
+            free(hdfs_handle->cvmfs_graft);
         globus_free(hdfs_handle);
-        free(hdfs_handle->cvmfs_graft);
     }
 
     destroy_hdfs_logging();
