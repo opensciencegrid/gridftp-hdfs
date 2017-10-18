@@ -36,8 +36,9 @@ char gridftp_file_name[PATH_MAX];
 char gridftp_transfer_type[10];
 
 static globus_mutex_t g_hdfs_mutex;
-static pthread_t g_thread_id;
-static int g_thread_pipe_fd;
+static pthread_t g_thread_id = 0;
+static int g_thread_pipe_fd = -1;
+static int g_thread_saved_stderr_fd = -1;
 
 static globus_result_t check_connection_limits(const hdfs_handle_t *, int, int);
 static int dumb_sem_open(const char *fname, int flags, mode_t mode, int value);
@@ -49,15 +50,6 @@ static int  hdfs_activate(void);
 static int  hdfs_deactivate(void);
 static void hdfs_command(globus_gfs_operation_t, globus_gfs_command_info_t *, void *);
 static void hdfs_start(globus_gfs_operation_t, globus_gfs_session_info_t *);
-
-void
-hdfs_destroy(
-    void *                              user_arg);
-
-void
-hdfs_start(
-    globus_gfs_operation_t              op,
-    globus_gfs_session_info_t *         session_info);
 
 void
 hdfs_destroy(
@@ -231,14 +223,22 @@ setup_hdfs_logging()
         globus_mutex_unlock(&g_hdfs_mutex);
         return;
     }
-    if (-1 == dup3(pipe_fds[1], 2, O_CLOEXEC))
+
+    if ((g_thread_saved_stderr_fd = dup(STDERR_FILENO)) == -1)
+    {
+        globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Failed to save stderr for HDFS logging: (errno=%d, %s).\n", errno, strerror(errno));
+        globus_mutex_unlock(&g_hdfs_mutex);
+        return;
+    }
+
+    if (-1 == dup3(pipe_fds[1], STDERR_FILENO, O_CLOEXEC))
     {
         globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Failed to reopen stderr for HDFS logging: (errno=%d, %s).\n", errno, strerror(errno));
         globus_mutex_unlock(&g_hdfs_mutex);
         return;
     }
     close(pipe_fds[1]);
-    g_thread_pipe_fd = 2;
+    g_thread_pipe_fd = STDERR_FILENO;
 
     int *pipe_ptr = malloc(sizeof(int));
     if (pipe_ptr == NULL)
@@ -266,13 +266,6 @@ setup_hdfs_logging()
 int
 hdfs_activate(void)
 {
-    if (globus_mutex_init(&g_hdfs_mutex, GLOBUS_NULL)) {
-        globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Unable to initialize global mutex");
-        return 1;
-    }
-    g_thread_id = 0;
-    g_thread_pipe_fd = -1;
-
     globus_extension_registry_add(
         GLOBUS_GFS_DSI_REGISTRY,
         "hdfs",
@@ -289,23 +282,6 @@ hdfs_activate(void)
 int
 hdfs_deactivate(void)
 {
-    if (g_thread_id > 0)
-    {
-        if (g_thread_pipe_fd >= 0)
-        {
-            fflush(stderr);
-            close(g_thread_pipe_fd);
-        }
-        void *retval;
-        pthread_join(g_thread_id, &retval);
-        g_thread_id = 0;
-        g_thread_pipe_fd = -1;
-    }
-
-    globus_mutex_destroy(&g_hdfs_mutex);
-    g_thread_id = 0;
-    g_thread_pipe_fd = -1;
-
     globus_extension_registry_remove(
         GLOBUS_GFS_DSI_REGISTRY, "hdfs");
 
@@ -568,7 +544,7 @@ hdfs_start(
     globus_gfs_operation_t              op,
     globus_gfs_session_info_t *         session_info)
 {
-    hdfs_handle_t*       hdfs_handle;
+    hdfs_handle_t*       hdfs_handle = NULL;
     globus_gfs_finished_info_t          finished_info;
     GlobusGFSName(hdfs_start);
     globus_result_t rc;
@@ -580,6 +556,12 @@ hdfs_start(
     int port;
     int user_transfer_limit = -1;
     int transfer_limit = -1;
+
+    if (globus_mutex_init(&g_hdfs_mutex, GLOBUS_NULL)) {
+        SystemError(hdfs_handle, "Unable to initialize mutex", rc);
+        globus_gridftp_server_operation_finished(op, rc, &finished_info);
+        return;
+    }
 
     hdfs_handle = (hdfs_handle_t *)globus_malloc(sizeof(hdfs_handle_t));
     memset(hdfs_handle, 0, sizeof(hdfs_handle_t));
@@ -605,6 +587,7 @@ hdfs_start(
         globus_gridftp_server_operation_finished(op, rc, &finished_info);
         return;
     }
+
     if (globus_mutex_init(hdfs_handle->mutex, GLOBUS_NULL)) {
         SystemError(hdfs_handle, "Unable to initialize mutex", rc);
         globus_gridftp_server_operation_finished(op, rc, &finished_info);
@@ -846,9 +829,32 @@ hdfs_destroy(
             globus_mutex_destroy(hdfs_handle->mutex);
             globus_free(hdfs_handle->mutex);
         }
+        if (hdfs_handle->cvmfs_graft)
+            free(hdfs_handle->cvmfs_graft);
         globus_free(hdfs_handle);
-        free(hdfs_handle->cvmfs_graft);
     }
+
+    if (g_thread_id > 0)
+    {
+        if (g_thread_saved_stderr_fd >= 0)
+        {
+            dup2(g_thread_saved_stderr_fd, STDERR_FILENO);
+            close(g_thread_saved_stderr_fd);
+        }
+
+        if (g_thread_pipe_fd >= 0)
+        {
+            close(g_thread_pipe_fd);
+        }
+
+        void *retval;
+        pthread_join(g_thread_id, &retval);
+    }
+
+    g_thread_id = 0;
+    g_thread_pipe_fd = -1;
+    g_thread_saved_stderr_fd = -1;
+
     closelog();
 }
 
@@ -914,18 +920,6 @@ set_close_done(
     hdfs_handle->done = 2;
     if ((hdfs_handle->done_status == GLOBUS_SUCCESS) && (rc != GLOBUS_SUCCESS)) {
         hdfs_handle->done_status = rc;
-    }
-    if (g_thread_id > 0)
-    {
-        if (g_thread_pipe_fd >= 0)
-        {
-            fflush(stderr);
-            close(g_thread_pipe_fd);
-        }
-        void *retval;
-        pthread_join(g_thread_id, &retval);
-        g_thread_id = 0;
-        g_thread_pipe_fd = -1;
     }
 }
 

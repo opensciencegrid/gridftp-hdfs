@@ -19,9 +19,10 @@
 
 
 #define SystemError(hdfs_handle, msg, rc) \
+    int system_errno = errno; \
     SomeError(hdfs_handle, msg) \
-    rc = GlobusGFSErrorSystemError(formatted_msg, errno); \
-    globus_free(formatted_msg);
+    rc = GlobusGFSErrorSystemError(formatted_msg, system_errno); \
+    globus_free(formatted_msg); \
 
 
 #define MemoryError(hdfs_handle, msg, rc) \
