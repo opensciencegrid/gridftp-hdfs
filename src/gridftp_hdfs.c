@@ -96,17 +96,13 @@ GlobusExtensionDefineModule(globus_gridftp_server_hdfs) =
 void
 segv_handler (int sig)
 {
-  printf ("SEGV triggered in native code.\n");
+  write(1, "SEGV triggered in native code.\n", 31);
   const int max_trace = 32;
   void *trace[max_trace];
-  char **messages = (char **)NULL;
   int i, trace_size = 0;
 
   trace_size = backtrace(trace, max_trace);
-  messages = backtrace_symbols(trace, trace_size);
-  for (i=0; i<trace_size; ++i) {
-	printf("[bt] %s\n", messages[i]);
-  }
+  backtrace_symbols_fd(trace, trace_size, 1);
   raise (SIGQUIT);
   signal (SIGSEGV, SIG_DFL);
   raise (SIGSEGV);

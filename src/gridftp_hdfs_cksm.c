@@ -474,7 +474,10 @@ globus_result_t hdfs_get_checksum_internal(hdfs_handle_t *hdfs_handle, const cha
     }
 
     // Not used in this function except in the contents of the error message.
-    hdfs_handle->pathname = strdup(pathname);
+    int allocated_pathname;
+    if ((allocated_pathname = (hdfs_handle->pathname == NULL))) {
+        hdfs_handle->pathname = strdup(pathname);
+    }
 
     size_t cksm_len = strlen(hdfs_handle->cksm_root);
     size_t path_len = strlen(pathname);
@@ -599,8 +602,9 @@ globus_result_t hdfs_get_checksum_internal(hdfs_handle_t *hdfs_handle, const cha
         globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "Got checksum (%s:%s) for %s.\n", requested_cksm, *cksm_value, filename);
     }
 
-    if (hdfs_handle->pathname) {
+    if (allocated_pathname && hdfs_handle->pathname) {
         free(hdfs_handle->pathname);
+        hdfs_handle->pathname = NULL;
     }
     free(cksm);
     free(buffer);
