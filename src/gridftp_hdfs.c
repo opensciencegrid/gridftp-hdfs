@@ -410,6 +410,8 @@ hdfs_command(
             }
         } else {
             result = GLOBUS_SUCCESS;
+	    // Delete associated checksums file
+	    hdfs_rm_checksums(hdfs_handle);
         }
 }
         break;

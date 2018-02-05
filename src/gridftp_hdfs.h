@@ -221,5 +221,9 @@ hdfs_get_checksum(
     const char *       requested_cksm, 
     char **            cksm_value);
 
+int
+hdfs_rm_checksums(
+    hdfs_handle_t *    hdfs_handle);
+
 #pragma GCC visibility pop
 

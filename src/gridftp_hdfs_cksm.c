@@ -129,6 +129,35 @@ char *concatenate(char *buffer, globus_off_t *offset, globus_size_t *length, con
 }
 
 /*
+ * Helper function to get HDFS checksum filename
+ *
+ * On failure, NULL is returned.
+ *
+ * On success, filename is returned. Value must be free()d by caller.
+ */
+static char * hdfs_get_cksm_filename(hdfs_handle_t *hdfs_handle) {
+
+    if (!hdfs_handle->cksm_root) {
+        return NULL;
+    }
+
+    size_t cksm_len = strlen(hdfs_handle->cksm_root);
+    size_t path_len = strlen(hdfs_handle->pathname);
+    size_t filelen = cksm_len + path_len + 2;
+    char * filename = malloc(filelen);
+    if (!filename) {
+        // Unable to allocate new filename
+        return NULL;
+    }
+    memcpy(filename, hdfs_handle->cksm_root, cksm_len);
+    filename[cksm_len] = '/';
+    memcpy(filename+cksm_len+1, hdfs_handle->pathname, path_len);
+    filename[filelen-1] = '\0';
+
+    return filename;
+}
+
+/*
  * Taken from globus_gridftp_server_file.c
  * Assume md5_human is length digest_length*2+1
  * Assume md5_openssl is length digest_length
@@ -334,21 +363,16 @@ globus_result_t hdfs_save_checksum(hdfs_handle_t *hdfs_handle) {
         return rc;
     }
 
-    size_t cksm_len = strlen(hdfs_handle->cksm_root);
-    size_t path_len = strlen(hdfs_handle->pathname);
-    size_t filelen = cksm_len + path_len + 2;
-    char * filename = malloc(filelen);
+    char * filename = hdfs_get_cksm_filename(hdfs_handle);
     if (!filename) {
         MemoryError(hdfs_handle, "Unable to allocate new filename", rc);
+        return rc;
     }
-    memcpy(filename, hdfs_handle->cksm_root, cksm_len);
-    filename[cksm_len] = '/';
-    memcpy(filename+cksm_len+1, hdfs_handle->pathname, path_len);
-    filename[filelen-1] = '\0';
 
     hdfsFile fh = hdfsOpenFile(fs, filename, O_WRONLY, 0, 0, 0);
     if (fh == NULL) {
         SystemError(hdfs_handle, "Failed to open checksum file", rc);
+        free(filename);
         return rc;
     }
 
@@ -387,7 +411,46 @@ globus_result_t hdfs_save_checksum(hdfs_handle_t *hdfs_handle) {
         globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "Saved checksums to %s.\n", filename);
     }
 
+    free(filename);
     free(buffer);
+
+    // Note we purposely leak the filesystem handle, as Hadoop has disconnect issues.
+    return rc;
+}
+
+/*
+ *  Remove checksums file
+ *
+ *  On success, returns 0
+ *  On failure, returns non-zero
+ */
+int hdfs_rm_checksums(hdfs_handle_t *hdfs_handle) {
+
+    if (!hdfs_handle->cksm_types || !hdfs_handle->cksm_root) {
+        return 0;
+    }
+
+    hdfsFS fs = hdfsConnectAsUser("default", 0, "root");
+    if (fs == NULL) {
+        globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Failure in connecting to HDFS for checksum file delete");
+        return -1;
+    }
+
+    char * filename = hdfs_get_cksm_filename(hdfs_handle);
+    if (!filename) {
+        globus_gfs_log_message(GLOBUS_GFS_LOG_ERR, "Unable to allocate new filename");
+        return -1;
+    }
+
+    int rc = hdfsDelete(fs, filename, 0);
+
+    if (rc == 0) {
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "Removed checksums %s.\n", filename);
+    } else {
+        globus_gfs_log_message(GLOBUS_GFS_LOG_WARN, "Could not remove checksums %s.\n", filename);
+    }
+
+    free(filename);
 
     // Note we purposely leak the filesystem handle, as Hadoop has disconnect issues.
     return rc;
@@ -479,17 +542,11 @@ globus_result_t hdfs_get_checksum_internal(hdfs_handle_t *hdfs_handle, const cha
         hdfs_handle->pathname = strdup(pathname);
     }
 
-    size_t cksm_len = strlen(hdfs_handle->cksm_root);
-    size_t path_len = strlen(pathname);
-    size_t filelen = cksm_len + path_len + 2;
-    char * filename = malloc(filelen);
+    char * filename = hdfs_get_cksm_filename(hdfs_handle);
     if (!filename) {
         MemoryError(hdfs_handle, "Unable to allocate new filename", rc);
+        return rc;
     }
-    memcpy(filename, hdfs_handle->cksm_root, cksm_len);
-    filename[cksm_len] = '/';
-    memcpy(filename+cksm_len+1, pathname, path_len);
-    filename[filelen-1] = '\0';
 
     hdfsFile fh = hdfsOpenFile(fs, filename, O_RDONLY, 0, 0, 0);
     if (fh == NULL) {
@@ -498,6 +555,7 @@ globus_result_t hdfs_get_checksum_internal(hdfs_handle_t *hdfs_handle, const cha
         fh = hdfsOpenFile(fs, filename, O_RDONLY, 0, 0, 0);
         if (fh == NULL) {
             SystemError(hdfs_handle, "Failed to open checksum file", rc);
+            free(filename);
             return rc;
         }
     }
@@ -607,6 +665,7 @@ globus_result_t hdfs_get_checksum_internal(hdfs_handle_t *hdfs_handle, const cha
         hdfs_handle->pathname = NULL;
     }
     free(cksm);
+    free(filename);
     free(buffer);
     // Note we purposely leak the filesystem handle (fs), as Hadoop has disconnect issues.
     return rc;
