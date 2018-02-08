@@ -137,7 +137,7 @@ char *concatenate(char *buffer, globus_off_t *offset, globus_size_t *length, con
  */
 static char * hdfs_get_cksm_filename(hdfs_handle_t *hdfs_handle) {
 
-    if (!hdfs_handle->cksm_root) {
+    if (!hdfs_handle || !hdfs_handle->cksm_root || !hdfs_handle->pathname) {
         return NULL;
     }
 
@@ -426,7 +426,7 @@ globus_result_t hdfs_save_checksum(hdfs_handle_t *hdfs_handle) {
  */
 int hdfs_rm_checksums(hdfs_handle_t *hdfs_handle) {
 
-    if (!hdfs_handle->cksm_types || !hdfs_handle->cksm_root) {
+    if (!hdfs_handle || !hdfs_handle->cksm_types || !hdfs_handle->cksm_root) {
         return 0;
     }
 
@@ -447,7 +447,7 @@ int hdfs_rm_checksums(hdfs_handle_t *hdfs_handle) {
     if (rc == 0) {
         globus_gfs_log_message(GLOBUS_GFS_LOG_INFO, "Removed checksums %s.\n", filename);
     } else {
-        globus_gfs_log_message(GLOBUS_GFS_LOG_WARN, "Could not remove checksums %s.\n", filename);
+        globus_gfs_log_message(GLOBUS_GFS_LOG_WARN, "Failed to remove remove checksums %s: (errno %d, %s)\n", filename, errno, strerror(errno));
     }
 
     free(filename);

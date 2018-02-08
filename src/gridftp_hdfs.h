@@ -83,6 +83,7 @@ typedef struct globus_l_gfs_hdfs_handle_s
     char *                              expected_cksm;
     const char *                        cksm_root;
     unsigned char                       cksm_types;
+    unsigned int                        cksm_cleanup;
     MD5_CTX                             md5;
     char                                md5_output[MD5_DIGEST_LENGTH];
     char                                md5_output_human[MD5_DIGEST_LENGTH*2+1];

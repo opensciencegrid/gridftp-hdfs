@@ -410,8 +410,11 @@ hdfs_command(
             }
         } else {
             result = GLOBUS_SUCCESS;
-	    // Delete associated checksums file
-	    hdfs_rm_checksums(hdfs_handle);
+
+            // Delete associated checksums file
+            if (hdfs_handle->cksm_cleanup) {
+                hdfs_rm_checksums(hdfs_handle);
+            }
         }
 }
         break;
@@ -787,6 +790,20 @@ hdfs_start(
         hdfs_parse_checksum_types(hdfs_handle, checksums_char);
     } else {
         hdfs_handle->cksm_types = 0;
+    }
+
+    const char * checksums_cleanup = getenv("GRIDFTP_HDFS_CHECKSUMS_CLEANUP");
+    if (checksums_cleanup) {
+        if (strcasecmp(checksums_cleanup, "yes") == 0 || strcmp(checksums_cleanup, "1") == 0) {
+            hdfs_handle->cksm_cleanup = 1;
+        } else {
+            hdfs_handle->cksm_cleanup = 0;
+        }
+        globus_gfs_log_message(GLOBUS_GFS_LOG_INFO,
+            "Checksum cleanup: %s\n", hdfs_handle->cksm_cleanup ? "yes" : "no");
+    } else {
+        // Checksum cleanup defaults to off
+        hdfs_handle->cksm_cleanup = 0;
     }
 
     hdfs_handle->tmp_file_pattern = (char *)NULL;
