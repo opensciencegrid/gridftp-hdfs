@@ -2,7 +2,7 @@
 #define gitrev
 
 Name:           gridftp-hdfs
-Version:        1.1.1
+Version:        1.2.0
 Release:        1%{?gitrev:.%{gitrev}git}%{?dist}
 Summary:        HDFS DSI plugin for GridFTP
 Group:          System Environment/Daemons
@@ -101,6 +101,15 @@ fi
 %{_datarootdir}/osg/sysconfig/globus-gridftp-server-plugin
 
 %changelog
+* Fri Feb 09 2018 Brian Bockelman <bbockelm@cse.unl.edu> - 1.2.0-1
+- Add ability to delete checksum files when actual files are deleted.
+
+* Tue Nov 14 2017 Carl Edquist <edquist@cs.wisc.edu> - 1.1.1-1.1
+- Merge OSG changes for version 1.1.1 (SOFTWARE-2999, SOFTWARE-2983)
+
+* Thu Nov 09 2017 Carl Edquist <edquist@cs.wisc.edu> - 1.1-1.2
+- Update hadoop build requirement (SOFTWARE-2983)
+
 * Tue Nov 07 2017 Brian Bockelman <bbockelm@cse.unl.edu> - 1.1.1-1
 - Fix potential crash when requesting new checksum types.
 
