@@ -1,6 +1,7 @@
 
 #include "gridftp_hdfs.h"
 #include <sys/mman.h>
+#include <fnmatch.h>
 
 #define ADVANCE_SLASHES(x) {while (x[0] == '/' && x[1] == '/') x++;}
 
@@ -111,7 +112,6 @@ int determine_replicas (const char * path) {
 
     size_t line_length = DEFAULT_LINE_LENGTH;
     char *map_line_index;
-    const char *filename_index;
     ssize_t bytes_read = 0;
     FILE *replica_map_fd = fopen(replica_map, "r");
     if (replica_map_fd == NULL) {
@@ -121,19 +121,24 @@ int determine_replicas (const char * path) {
     }
     while ( (bytes_read = getline(&map_line, &line_length, replica_map_fd)) > -1) {
         map_line_index = map_line;
-        filename_index = path;
         // Skip comment lines
         if (map_line && map_line[0] == '#') continue;
 
         // Skip over leading whitespace
-        while(*map_line_index && *map_line_index == ' ') map_line_index++;
+        while (*map_line_index && *map_line_index == ' ') map_line_index++;
 
+        char *map_line_tmp = malloc(line_length + 1);
         // Try and match the map line and filename
-        while(*map_line_index && *filename_index && 
-                (*map_line_index == *filename_index)) {
-            map_line_index++;
-            filename_index++;
+        if (sscanf(map_line_index, "%s", map_line_tmp) != 1) {
+            free(map_line_tmp);
+            continue;
         }
+        if (fnmatch(map_line_tmp, path, 0) && strncmp(map_line_tmp, path, strlen(map_line_tmp))) {
+            free(map_line_tmp);
+            continue;
+        }
+        map_line_index += strlen(map_line_tmp);
+        free(map_line_tmp);
 
         /*
         * If we've reached the end of the pattern, then we've found
