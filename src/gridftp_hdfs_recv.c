@@ -1,6 +1,7 @@
 
 #include "gridftp_hdfs.h"
 #include <sys/mman.h>
+#include <fnmatch.h>
 
 #define ADVANCE_SLASHES(x) {while (x[0] == '/' && x[1] == '/') x++;}
 
@@ -111,7 +112,6 @@ int determine_replicas (const char * path) {
 
     size_t line_length = DEFAULT_LINE_LENGTH;
     char *map_line_index;
-    const char *filename_index;
     ssize_t bytes_read = 0;
     FILE *replica_map_fd = fopen(replica_map, "r");
     if (replica_map_fd == NULL) {
@@ -121,19 +121,24 @@ int determine_replicas (const char * path) {
     }
     while ( (bytes_read = getline(&map_line, &line_length, replica_map_fd)) > -1) {
         map_line_index = map_line;
-        filename_index = path;
         // Skip comment lines
         if (map_line && map_line[0] == '#') continue;
 
         // Skip over leading whitespace
-        while(*map_line_index && *map_line_index == ' ') map_line_index++;
+        while (*map_line_index && *map_line_index == ' ') map_line_index++;
 
+        char *map_line_tmp = malloc(line_length + 1);
         // Try and match the map line and filename
-        while(*map_line_index && *filename_index && 
-                (*map_line_index == *filename_index)) {
-            map_line_index++;
-            filename_index++;
+        if (sscanf(map_line_index, "%s", map_line_tmp) != 1) {
+            free(map_line_tmp);
+            continue;
         }
+        if (fnmatch(map_line_tmp, path, 0) && strncmp(map_line_tmp, path, strlen(map_line_tmp))) {
+            free(map_line_tmp);
+            continue;
+        }
+        map_line_index += strlen(map_line_tmp);
+        free(map_line_tmp);
 
         /*
         * If we've reached the end of the pattern, then we've found
@@ -230,7 +235,7 @@ hdfs_recv(
 {
     globus_l_gfs_hdfs_handle_t *        hdfs_handle;
     globus_result_t                     rc = GLOBUS_SUCCESS; 
-
+    struct hdfsStreamBuilder *          builder = NULL;
     GlobusGFSName(hdfs_recv);
 
 
@@ -272,7 +277,30 @@ hdfs_recv(
         goto cleanup;
     }
 
-    hdfs_handle->fd = hdfsOpenFile(hdfs_handle->fs, hdfs_handle->pathname, O_WRONLY, 0, num_replicas, 0);
+    builder = hdfsStreamBuilderAlloc(hdfs_handle->fs, hdfs_handle->pathname, O_WRONLY);
+    if (!builder) {
+        SystemError(hdfs_handle,
+                    "allocating a file handle due to an internal HDFS error.",
+                    rc);
+        goto cleanup;
+    }
+    if (hdfsStreamBuilderSetReplication(builder, num_replicas)) {
+        SystemError(hdfs_handle,
+                    "setting number of replicas on file handle.",
+                    rc);
+        goto cleanup;
+    }
+    // If we have only one replica, then we set the blocksize to an admittedly arbitrary 40GB.
+    // This way, any data losses resulting in blocks missing result in one bad file per block.
+    if (num_replicas == 1 && hdfsStreamBuilderSetDefaultBlockSize(builder, 42949672960)) {
+        SystemError(hdfs_handle,
+                    "setting block size to 40GB.",
+                    rc);
+        goto cleanup;
+    }
+
+    hdfs_handle->fd = hdfsStreamBuilderBuild(builder);
+    builder = NULL;
     if (!hdfs_handle->fd)
     {
         if (errno == EINTERNAL) {
@@ -295,6 +323,9 @@ hdfs_recv(
     hdfs_dispatch_write(hdfs_handle);
 
 cleanup:
+    if (builder) {
+        hdfsStreamBuilderFree(builder);
+    }
     if (rc != GLOBUS_SUCCESS) {
         set_done(hdfs_handle, rc);
         if (!hdfs_handle->sent_finish) {
