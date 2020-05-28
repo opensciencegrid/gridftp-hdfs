@@ -235,7 +235,6 @@ hdfs_recv(
 {
     globus_l_gfs_hdfs_handle_t *        hdfs_handle;
     globus_result_t                     rc = GLOBUS_SUCCESS; 
-    struct hdfsStreamBuilder *          builder = NULL;
     GlobusGFSName(hdfs_recv);
 
 
@@ -277,30 +276,12 @@ hdfs_recv(
         goto cleanup;
     }
 
-    builder = hdfsStreamBuilderAlloc(hdfs_handle->fs, hdfs_handle->pathname, O_WRONLY);
-    if (!builder) {
-        SystemError(hdfs_handle,
-                    "allocating a file handle due to an internal HDFS error.",
-                    rc);
-        goto cleanup;
-    }
-    if (hdfsStreamBuilderSetReplication(builder, num_replicas)) {
-        SystemError(hdfs_handle,
-                    "setting number of replicas on file handle.",
-                    rc);
-        goto cleanup;
-    }
-    // If we have only one replica, then we set the blocksize to an admittedly arbitrary 40GB.
-    // This way, any data losses resulting in blocks missing result in one bad file per block.
-    if (num_replicas == 1 && hdfsStreamBuilderSetDefaultBlockSize(builder, 42949672960)) {
-        SystemError(hdfs_handle,
-                    "setting block size to 40GB.",
-                    rc);
-        goto cleanup;
-    }
-
-    hdfs_handle->fd = hdfsStreamBuilderBuild(builder);
-    builder = NULL;
+    hdfs_handle->fd = hdfsOpenFile(hdfs_handle->fs, /* hdfsFS fs */
+                                   hdfs_handle->pathname, /* const char *path */
+                                   O_WRONLY, /* int flags */
+                                   0, /* int bufferSize */
+                                   num_replicas, /* short replication */
+                                   num_replicas == 1 ? (tSize)42949672960 : 0); /* tSize blockSize */
     if (!hdfs_handle->fd)
     {
         if (errno == EINTERNAL) {
@@ -323,9 +304,6 @@ hdfs_recv(
     hdfs_dispatch_write(hdfs_handle);
 
 cleanup:
-    if (builder) {
-        hdfsStreamBuilderFree(builder);
-    }
     if (rc != GLOBUS_SUCCESS) {
         set_done(hdfs_handle, rc);
         if (!hdfs_handle->sent_finish) {
